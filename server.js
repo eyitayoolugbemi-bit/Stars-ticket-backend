@@ -10,9 +10,11 @@ app.use(express.json());
 const PAYSTACK_SECRET = process.env.PAYSTACK_SECRET;
 
 app.post("/verify", async (req, res) => {
-  const { reference, ticket, qty, email } = req.body;
+  console.log("REQUEST BODY:", req.body);
 
   try {
+    const { reference, ticket, qty, email } = req.body;
+
     const verify = await axios.get(
       `https://api.paystack.co/transaction/verify/${reference}`,
       {
@@ -22,17 +24,46 @@ app.post("/verify", async (req, res) => {
       }
     );
 
-    if (verify.data.data.status === "success") {
-      const qrData = JSON.stringify({ ref: reference, ticket, qty, email });
+    console.log("PAYSTACK RESPONSE:", verify.data);
+
+    const status = verify?.data?.data?.status;
+
+    if (status === "success") {
+
+      const qrData = JSON.stringify({
+        reference,
+        ticket,
+        qty,
+        email
+      });
+
+      console.log("QR DATA:", qrData);
+
       const qrImage = await QRCode.toDataURL(qrData);
 
-      return res.json({ success: true, qr: qrImage });
+      return res.json({
+        success: true,
+        qr: qrImage
+      });
+
     } else {
-      return res.json({ success: false });
+
+      return res.json({
+        success: false,
+        message: "Payment not successful"
+      });
+
     }
 
   } catch (err) {
-    return res.status(500).json({ error: "Verification failed" });
+
+    console.error("ERROR:", err.response?.data || err.message);
+
+    return res.status(500).json({
+      error: "Verification failed",
+      details: err.response?.data || err.message
+    });
+
   }
 });
 
