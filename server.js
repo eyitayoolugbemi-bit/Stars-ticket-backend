@@ -11,6 +11,7 @@ admin.initializeApp({
 });
 
 const db = admin.firestore();
+
 const app = express();
 
 app.use(cors());
@@ -79,12 +80,7 @@ app.get("/", (req, res) => {
   res.send("STARS backend running");
 });
 
-// ✅ PORT (IMPORTANT FOR RENDER)
-const PORT = process.env.PORT || 10000;
-
-app.listen(PORT, () => {
-  console.log("Server running on port " + PORT);
-});
+// ✅ FIREBASE TEST ROUTE
 app.get("/test-db", async (req, res) => {
   try {
     await db.collection("test").doc("check").set({
@@ -97,4 +93,11 @@ app.get("/test-db", async (req, res) => {
     console.error(err);
     res.status(500).send("Error connecting to Firebase");
   }
+});
+
+// ✅ PORT (IMPORTANT FOR RENDER)
+const PORT = process.env.PORT || 10000;
+
+app.listen(PORT, () => {
+  console.log("Server running on port " + PORT);
 });
