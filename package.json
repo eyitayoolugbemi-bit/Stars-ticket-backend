@@ -1,15 +1,18 @@
 {
-  "name": "stars-ticket-backend",
+  "name": "stars-backend",
   "version": "1.0.0",
-  "description": "STARS ticket backend",
+  "description": "",
   "main": "server.js",
   "scripts": {
     "start": "node server.js"
   },
+  "author": "",
+  "license": "ISC",
   "dependencies": {
-    "express": "^4.18.2",
     "axios": "^1.6.0",
     "cors": "^2.8.5",
-    "qrcode": "^1.5.4"
+    "express": "^4.18.2",
+    "qrcode": "^1.5.3",
+    "firebase-admin": "^12.0.0"
   }
 }
