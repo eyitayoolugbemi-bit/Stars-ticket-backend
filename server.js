@@ -2,7 +2,15 @@ const express = require("express");
 const axios = require("axios");
 const cors = require("cors");
 const QRCode = require("qrcode");
+const admin = require("firebase-admin");
 
+const serviceAccount = JSON.parse(process.env.FIREBASE_KEY);
+
+admin.initializeApp({
+  credential: admin.credential.cert(serviceAccount)
+});
+
+const db = admin.firestore();
 const app = express();
 
 app.use(cors());
@@ -76,4 +84,17 @@ const PORT = process.env.PORT || 10000;
 
 app.listen(PORT, () => {
   console.log("Server running on port " + PORT);
+});
+app.get("/test-db", async (req, res) => {
+  try {
+    await db.collection("test").doc("check").set({
+      status: "connected",
+      time: new Date()
+    });
+
+    res.send("Firebase connected");
+  } catch (err) {
+    console.error(err);
+    res.status(500).send("Error connecting to Firebase");
+  }
 });
