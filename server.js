@@ -1,29 +1,44 @@
+const express = require("express");
+const axios = require("axios");
+const cors = require("cors");
+const QRCode = require("qrcode");
+
+const app = express();
+
+app.use(cors());
+app.use(express.json());
+
+const PAYSTACK_SECRET = process.env.PAYSTACK_SECRET;
+
+// ✅ VERIFY ROUTE (STABLE VERSION)
 app.post("/verify", async (req, res) => {
   const { reference, ticket, qty, email } = req.body;
 
-  console.log("🔥 VERIFY ROUTE HIT:", req.body);
+  console.log("🔥 VERIFY HIT:", req.body);
 
   try {
-    const verify = await axios.get(
-      `https://api.paystack.co/transaction/verify/${reference}`,
+    // 🔹 Call Paystack
+    const response = await axios.get(
+      "https://api.paystack.co/transaction/verify/" + reference,
       {
         headers: {
-          Authorization: `Bearer ${PAYSTACK_SECRET}`
+          Authorization: "Bearer " + PAYSTACK_SECRET
         }
       }
     );
 
-    console.log("PAYSTACK RESPONSE:", verify.data);
+    console.log("✅ PAYSTACK:", response.data);
 
-    const paymentData = verify.data.data;
+    const data = response.data.data;
 
-    if (paymentData.status === "success") {
+    // ✅ Check if payment successful
+    if (data && data.status === "success") {
 
       const qrData = JSON.stringify({
-        ref: reference,
-        ticket,
-        qty,
-        email
+        reference: reference,
+        ticket: ticket,
+        qty: qty,
+        email: email
       });
 
       const qrImage = await QRCode.toDataURL(qrData);
@@ -41,12 +56,24 @@ app.post("/verify", async (req, res) => {
       });
     }
 
-  } catch (err) {
-    console.error("❌ VERIFY ERROR:", err.response?.data || err.message);
+  } catch (error) {
+    console.error("❌ ERROR:", error.response?.data || error.message);
 
     return res.status(500).json({
       error: "Verification failed",
-      details: err.response?.data || err.message
+      details: error.response?.data || error.message
     });
   }
+});
+
+// ✅ ROOT TEST
+app.get("/", (req, res) => {
+  res.send("STARS backend running");
+});
+
+// ✅ PORT (IMPORTANT FOR RENDER)
+const PORT = process.env.PORT || 10000;
+
+app.listen(PORT, () => {
+  console.log("Server running on port " + PORT);
 });
