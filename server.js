@@ -4,20 +4,33 @@ const cors = require("cors");
 const QRCode = require("qrcode");
 const admin = require("firebase-admin");
 
-const serviceAccount = JSON.parse(process.env.FIREBASE_KEY);
-
-admin.initializeApp({
-  credential: admin.credential.cert(serviceAccount)
-});
-
-const db = admin.firestore();
-
 const app = express();
 
 app.use(cors());
 app.use(express.json());
 
 const PAYSTACK_SECRET = process.env.PAYSTACK_SECRET;
+
+// 🔥 SAFE FIREBASE INITIALIZATION
+let serviceAccount;
+
+try {
+  serviceAccount = JSON.parse(process.env.FIREBASE_KEY);
+} catch (err) {
+  console.error("❌ Firebase JSON parsing failed:");
+  console.error(err.message);
+}
+
+// Only initialize if valid
+if (serviceAccount) {
+  admin.initializeApp({
+    credential: admin.credential.cert(serviceAccount)
+  });
+
+  console.log("✅ Firebase initialized successfully");
+}
+
+const db = admin.firestore();
 
 // ✅ VERIFY ROUTE (STABLE VERSION)
 app.post("/verify", async (req, res) => {
