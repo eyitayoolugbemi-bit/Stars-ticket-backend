@@ -23,7 +23,6 @@ try {
 
   const serviceAccount = JSON.parse(raw);
 
-  // Fix private key formatting
   serviceAccount.private_key = serviceAccount.private_key.replace(/\\n/g, '\n');
 
   if (!admin.apps.length) {
@@ -41,11 +40,11 @@ try {
   console.error(err.message);
 }
 
-// ✅ VERIFY ROUTE (WITH FIREBASE STORAGE)
+// ==========================
+// 🔐 VERIFY ROUTE
+// ==========================
 app.post("/verify", async (req, res) => {
   const { reference, ticket, qty, email } = req.body;
-
-  console.log("🔥 VERIFY HIT:", req.body);
 
   try {
     const response = await axios.get(
@@ -70,7 +69,6 @@ app.post("/verify", async (req, res) => {
 
       const qrImage = await QRCode.toDataURL(qrData);
 
-      // Save to Firebase
       if (db) {
         await db.collection("tickets").doc(reference).set({
           reference,
@@ -81,8 +79,6 @@ app.post("/verify", async (req, res) => {
           used: false,
           createdAt: new Date()
         });
-
-        console.log("✅ Ticket saved to Firebase");
       }
 
       return res.json({
@@ -99,8 +95,6 @@ app.post("/verify", async (req, res) => {
     }
 
   } catch (error) {
-    console.error("❌ VERIFY ERROR:", error.response?.data || error.message);
-
     return res.status(500).json({
       error: "Verification failed",
       details: error.response?.data || error.message
@@ -108,34 +102,25 @@ app.post("/verify", async (req, res) => {
   }
 });
 
-// ✅ SCAN ROUTE (VALIDATE TICKET)
+
+// ==========================
+// 🎫 SCAN ROUTE
+// ==========================
 app.post("/scan", async (req, res) => {
   const { reference } = req.body;
 
-  console.log("🔍 SCAN REQUEST:", reference);
-
   try {
-    if (!db) {
-      throw new Error("Firestore not initialized");
-    }
-
     const docRef = db.collection("tickets").doc(reference);
     const doc = await docRef.get();
 
     if (!doc.exists) {
-      return res.json({
-        success: false,
-        message: "Invalid ticket"
-      });
+      return res.json({ success: false, message: "Invalid ticket" });
     }
 
     const ticketData = doc.data();
 
     if (ticketData.used) {
-      return res.json({
-        success: false,
-        message: "Ticket already used"
-      });
+      return res.json({ success: false, message: "Ticket already used" });
     }
 
     await docRef.update({
@@ -150,8 +135,6 @@ app.post("/scan", async (req, res) => {
     });
 
   } catch (err) {
-    console.error("❌ SCAN ERROR:", err.message);
-
     res.status(500).json({
       success: false,
       message: "Server error",
@@ -161,17 +144,14 @@ app.post("/scan", async (req, res) => {
 });
 
 
-// ✅ 🔥 ADMIN ROUTE (THIS IS WHAT YOUR ADMIN HTML CALLS)
+// ==========================
+// 📊 ADMIN - TICKETS
+// ==========================
 app.get("/tickets", async (req, res) => {
   try {
-    if (!db) {
-      throw new Error("Firestore not initialized");
-    }
-
     const snapshot = await db.collection("tickets").get();
 
     const tickets = [];
-
     snapshot.forEach(doc => {
       tickets.push(doc.data());
     });
@@ -183,8 +163,6 @@ app.get("/tickets", async (req, res) => {
     });
 
   } catch (err) {
-    console.error("❌ TICKETS ERROR:", err.message);
-
     res.status(500).json({
       success: false,
       message: "Failed to fetch tickets",
@@ -194,18 +172,95 @@ app.get("/tickets", async (req, res) => {
 });
 
 
-// ✅ ROOT TEST
+// ==========================
+// 🗳️ VOTING SYSTEM (NEW)
+// ==========================
+
+// Submit vote
+app.post("/vote", async (req, res) => {
+  try {
+    const { contestantId, voterId } = req.body;
+
+    if (!contestantId || !voterId) {
+      return res.status(400).json({
+        success: false,
+        message: "Missing fields"
+      });
+    }
+
+    // Prevent double voting
+    const existingVote = await db.collection("votes")
+      .where("voterId", "==", voterId)
+      .get();
+
+    if (!existingVote.empty) {
+      return res.json({
+        success: false,
+        message: "You have already voted"
+      });
+    }
+
+    await db.collection("votes").add({
+      contestantId,
+      voterId,
+      createdAt: new Date()
+    });
+
+    return res.json({
+      success: true,
+      message: "Vote recorded"
+    });
+
+  } catch (err) {
+    res.status(500).json({
+      success: false,
+      message: "Vote failed",
+      error: err.message
+    });
+  }
+});
+
+
+// Get vote counts (leaderboard)
+app.get("/votes", async (req, res) => {
+  try {
+    const snapshot = await db.collection("votes").get();
+
+    const counts = {};
+
+    snapshot.forEach(doc => {
+      const data = doc.data();
+      counts[data.contestantId] = (counts[data.contestantId] || 0) + 1;
+    });
+
+    res.json({
+      success: true,
+      leaderboard: counts
+    });
+
+  } catch (err) {
+    res.status(500).json({
+      success: false,
+      message: "Failed to fetch votes",
+      error: err.message
+    });
+  }
+});
+
+
+// ==========================
+// ROOT
+// ==========================
 app.get("/", (req, res) => {
   res.send("STARS backend running");
 });
 
-// ✅ FIREBASE TEST
+
+// ==========================
+// FIREBASE TEST
+// ==========================
 app.get("/test-db", async (req, res) => {
   try {
-    if (!db) {
-      throw new Error("Firestore not initialized");
-    }
-
     await db.collection("test").doc("check").set({
       status: "connected",
       time: new Date()
@@ -214,17 +269,17 @@ app.get("/test-db", async (req, res) => {
     res.send("Firebase connected");
 
   } catch (err) {
-    console.error("🔥 FIREBASE ERROR:", err.message);
-
     res.status(500).json({
       message: "Error connecting to Firebase",
-      error: err.message,
-      code: err.code || "no-code"
+      error: err.message
     });
   }
 });
 
-// ✅ PORT
+
+// ==========================
+// PORT
+// ==========================
 const PORT = process.env.PORT || 10000;
 
 app.listen(PORT, () => {
