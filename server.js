@@ -11,7 +11,7 @@ app.use(express.json());
 
 const PAYSTACK_SECRET = process.env.PAYSTACK_SECRET;
 
-// 🔥 SAFE FIREBASE INITIALIZATION (FULLY FIXED)
+// 🔥 SAFE FIREBASE INITIALIZATION
 let db = null;
 
 try {
@@ -23,12 +23,14 @@ try {
 
   const serviceAccount = JSON.parse(raw);
 
-  // ✅ Fix private key formatting
+  // Fix private key formatting
   serviceAccount.private_key = serviceAccount.private_key.replace(/\\n/g, '\n');
 
-  admin.initializeApp({
-    credential: admin.credential.cert(serviceAccount)
-  });
+  if (!admin.apps.length) {
+    admin.initializeApp({
+      credential: admin.credential.cert(serviceAccount)
+    });
+  }
 
   db = admin.firestore();
 
@@ -55,8 +57,6 @@ app.post("/verify", async (req, res) => {
       }
     );
 
-    console.log("✅ PAYSTACK:", response.data);
-
     const data = response.data.data;
 
     if (data && data.status === "success") {
@@ -70,7 +70,7 @@ app.post("/verify", async (req, res) => {
 
       const qrImage = await QRCode.toDataURL(qrData);
 
-      // ✅ SAVE TO FIREBASE
+      // Save to Firebase
       if (db) {
         await db.collection("tickets").doc(reference).set({
           reference,
@@ -99,7 +99,7 @@ app.post("/verify", async (req, res) => {
     }
 
   } catch (error) {
-    console.error("❌ ERROR:", error.response?.data || error.message);
+    console.error("❌ VERIFY ERROR:", error.response?.data || error.message);
 
     return res.status(500).json({
       error: "Verification failed",
@@ -108,7 +108,7 @@ app.post("/verify", async (req, res) => {
   }
 });
 
-// ✅ 🔍 SCAN ROUTE (NEW - TICKET VALIDATION)
+// ✅ SCAN ROUTE (VALIDATE TICKET)
 app.post("/scan", async (req, res) => {
   const { reference } = req.body;
 
@@ -119,9 +119,9 @@ app.post("/scan", async (req, res) => {
       throw new Error("Firestore not initialized");
     }
 
-    const doc = await db.collection("tickets").doc(reference).get();
+    const docRef = db.collection("tickets").doc(reference);
+    const doc = await docRef.get();
 
-    // ❌ Ticket not found
     if (!doc.exists) {
       return res.json({
         success: false,
@@ -131,7 +131,6 @@ app.post("/scan", async (req, res) => {
 
     const ticketData = doc.data();
 
-    // ❌ Already used
     if (ticketData.used) {
       return res.json({
         success: false,
@@ -139,8 +138,7 @@ app.post("/scan", async (req, res) => {
       });
     }
 
-    // ✅ Mark as used
-    await db.collection("tickets").doc(reference).update({
+    await docRef.update({
       used: true,
       usedAt: new Date()
     });
@@ -152,7 +150,7 @@ app.post("/scan", async (req, res) => {
     });
 
   } catch (err) {
-    console.error("❌ SCAN ERROR:", err);
+    console.error("❌ SCAN ERROR:", err.message);
 
     res.status(500).json({
       success: false,
@@ -162,12 +160,46 @@ app.post("/scan", async (req, res) => {
   }
 });
 
+
+// ✅ 🔥 ADMIN ROUTE (THIS IS WHAT YOUR ADMIN HTML CALLS)
+app.get("/tickets", async (req, res) => {
+  try {
+    if (!db) {
+      throw new Error("Firestore not initialized");
+    }
+
+    const snapshot = await db.collection("tickets").get();
+
+    const tickets = [];
+
+    snapshot.forEach(doc => {
+      tickets.push(doc.data());
+    });
+
+    res.json({
+      success: true,
+      count: tickets.length,
+      tickets
+    });
+
+  } catch (err) {
+    console.error("❌ TICKETS ERROR:", err.message);
+
+    res.status(500).json({
+      success: false,
+      message: "Failed to fetch tickets",
+      error: err.message
+    });
+  }
+});
+
+
 // ✅ ROOT TEST
 app.get("/", (req, res) => {
   res.send("STARS backend running");
 });
 
-// ✅ FIREBASE TEST ROUTE
+// ✅ FIREBASE TEST
 app.get("/test-db", async (req, res) => {
   try {
     if (!db) {
@@ -182,7 +214,7 @@ app.get("/test-db", async (req, res) => {
     res.send("Firebase connected");
 
   } catch (err) {
-    console.error("🔥 FULL FIREBASE ERROR:", err);
+    console.error("🔥 FIREBASE ERROR:", err.message);
 
     res.status(500).json({
       message: "Error connecting to Firebase",
@@ -196,5 +228,5 @@ app.get("/test-db", async (req, res) => {
 const PORT = process.env.PORT || 10000;
 
 app.listen(PORT, () => {
-  console.log("Server running on port " + PORT);
+  console.log("🚀 Server running on port " + PORT);
 });
