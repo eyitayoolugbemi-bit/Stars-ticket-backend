@@ -11,11 +11,15 @@ app.use(express.json());
 
 const PAYSTACK_SECRET = process.env.PAYSTACK_SECRET;
 
-// 🔥 SAFE FIREBASE INITIALIZATION
+// 🔥 SAFE FIREBASE INITIALIZATION (FIXED)
 let serviceAccount;
 
 try {
   serviceAccount = JSON.parse(process.env.FIREBASE_KEY);
+
+  // 🔥 FIX: Convert escaped \n to real line breaks
+  serviceAccount.private_key = serviceAccount.private_key.replace(/\\n/g, '\n');
+
 } catch (err) {
   console.error("❌ Firebase JSON parsing failed:");
   console.error(err.message);
