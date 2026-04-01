@@ -39,7 +39,7 @@ try {
   console.error(err.message);
 }
 
-// ✅ VERIFY ROUTE (UPDATED WITH FIREBASE STORAGE)
+// ✅ VERIFY ROUTE (WITH FIREBASE STORAGE)
 app.post("/verify", async (req, res) => {
   const { reference, ticket, qty, email } = req.body;
 
@@ -70,7 +70,7 @@ app.post("/verify", async (req, res) => {
 
       const qrImage = await QRCode.toDataURL(qrData);
 
-      // ✅ SAVE TICKET TO FIREBASE
+      // ✅ SAVE TO FIREBASE
       if (db) {
         await db.collection("tickets").doc(reference).set({
           reference,
@@ -108,12 +108,66 @@ app.post("/verify", async (req, res) => {
   }
 });
 
+// ✅ 🔍 SCAN ROUTE (NEW - TICKET VALIDATION)
+app.post("/scan", async (req, res) => {
+  const { reference } = req.body;
+
+  console.log("🔍 SCAN REQUEST:", reference);
+
+  try {
+    if (!db) {
+      throw new Error("Firestore not initialized");
+    }
+
+    const doc = await db.collection("tickets").doc(reference).get();
+
+    // ❌ Ticket not found
+    if (!doc.exists) {
+      return res.json({
+        success: false,
+        message: "Invalid ticket"
+      });
+    }
+
+    const ticketData = doc.data();
+
+    // ❌ Already used
+    if (ticketData.used) {
+      return res.json({
+        success: false,
+        message: "Ticket already used"
+      });
+    }
+
+    // ✅ Mark as used
+    await db.collection("tickets").doc(reference).update({
+      used: true,
+      usedAt: new Date()
+    });
+
+    return res.json({
+      success: true,
+      message: "Access granted",
+      ticket: ticketData
+    });
+
+  } catch (err) {
+    console.error("❌ SCAN ERROR:", err);
+
+    res.status(500).json({
+      success: false,
+      message: "Server error",
+      error: err.message
+    });
+  }
+});
+
 // ✅ ROOT TEST
 app.get("/", (req, res) => {
   res.send("STARS backend running");
 });
 
-// ✅ FIREBASE TEST ROUTE (NOW SHOWS REAL ERROR)
+// ✅ FIREBASE TEST ROUTE
 app.get("/test-db", async (req, res) => {
   try {
     if (!db) {
