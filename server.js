@@ -11,30 +11,33 @@ app.use(express.json());
 
 const PAYSTACK_SECRET = process.env.PAYSTACK_SECRET;
 
-// 🔥 SAFE FIREBASE INITIALIZATION (FIXED)
-let serviceAccount;
+// 🔥 SAFE FIREBASE INITIALIZATION (FULLY FIXED)
+let db = null;
 
 try {
-  serviceAccount = JSON.parse(process.env.FIREBASE_KEY);
+  const raw = process.env.FIREBASE_KEY;
 
-  // 🔥 FIX: Convert escaped \n to real line breaks
+  if (!raw) {
+    throw new Error("FIREBASE_KEY is missing from environment variables");
+  }
+
+  const serviceAccount = JSON.parse(raw);
+
+  // ✅ Fix private key formatting
   serviceAccount.private_key = serviceAccount.private_key.replace(/\\n/g, '\n');
 
-} catch (err) {
-  console.error("❌ Firebase JSON parsing failed:");
-  console.error(err.message);
-}
-
-// Only initialize if valid
-if (serviceAccount) {
   admin.initializeApp({
     credential: admin.credential.cert(serviceAccount)
   });
 
-  console.log("✅ Firebase initialized successfully");
-}
+  db = admin.firestore();
 
-const db = admin.firestore();
+  console.log("✅ Firebase initialized successfully");
+
+} catch (err) {
+  console.error("❌ Firebase initialization error:");
+  console.error(err.message);
+}
 
 // ✅ VERIFY ROUTE (STABLE VERSION)
 app.post("/verify", async (req, res) => {
@@ -43,7 +46,6 @@ app.post("/verify", async (req, res) => {
   console.log("🔥 VERIFY HIT:", req.body);
 
   try {
-    // 🔹 Call Paystack
     const response = await axios.get(
       "https://api.paystack.co/transaction/verify/" + reference,
       {
@@ -57,7 +59,6 @@ app.post("/verify", async (req, res) => {
 
     const data = response.data.data;
 
-    // ✅ Check if payment successful
     if (data && data.status === "success") {
 
       const qrData = JSON.stringify({
@@ -97,22 +98,32 @@ app.get("/", (req, res) => {
   res.send("STARS backend running");
 });
 
-// ✅ FIREBASE TEST ROUTE
+// ✅ FIREBASE TEST ROUTE (NOW SHOWS REAL ERROR)
 app.get("/test-db", async (req, res) => {
   try {
+    if (!db) {
+      throw new Error("Firestore not initialized");
+    }
+
     await db.collection("test").doc("check").set({
       status: "connected",
       time: new Date()
     });
 
     res.send("Firebase connected");
+
   } catch (err) {
-    console.error(err);
-    res.status(500).send("Error connecting to Firebase");
+    console.error("🔥 FULL FIREBASE ERROR:", err);
+
+    res.status(500).json({
+      message: "Error connecting to Firebase",
+      error: err.message,
+      code: err.code || "no-code"
+    });
   }
 });
 
-// ✅ PORT (IMPORTANT FOR RENDER)
+// ✅ PORT
 const PORT = process.env.PORT || 10000;
 
 app.listen(PORT, () => {
