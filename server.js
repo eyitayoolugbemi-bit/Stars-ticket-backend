@@ -39,7 +39,7 @@ try {
   console.error(err.message);
 }
 
-// ✅ VERIFY ROUTE (STABLE VERSION)
+// ✅ VERIFY ROUTE (UPDATED WITH FIREBASE STORAGE)
 app.post("/verify", async (req, res) => {
   const { reference, ticket, qty, email } = req.body;
 
@@ -62,18 +62,33 @@ app.post("/verify", async (req, res) => {
     if (data && data.status === "success") {
 
       const qrData = JSON.stringify({
-        reference: reference,
-        ticket: ticket,
-        qty: qty,
-        email: email
+        reference,
+        ticket,
+        qty,
+        email
       });
 
       const qrImage = await QRCode.toDataURL(qrData);
 
+      // ✅ SAVE TICKET TO FIREBASE
+      if (db) {
+        await db.collection("tickets").doc(reference).set({
+          reference,
+          ticket,
+          qty,
+          email,
+          qrData,
+          used: false,
+          createdAt: new Date()
+        });
+
+        console.log("✅ Ticket saved to Firebase");
+      }
+
       return res.json({
         success: true,
         qr: qrImage,
-        reference: reference
+        reference
       });
 
     } else {
