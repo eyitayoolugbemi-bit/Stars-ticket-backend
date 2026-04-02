@@ -89,30 +89,95 @@ app.get("/admin/stats", verifyAdmin, async (req, res) => {
     });
 
   } catch (err) {
-    res.status(500).json({
-      error: err.message
-    });
+    res.status(500).json({ error: err.message });
   }
 });
 
 // ==========================
-// 🧑‍⚖️ ADMIN JURY VIEW (NEW)
+// 📊 ADMIN - ALL VOTES
+// ==========================
+app.get("/admin/votes", verifyAdmin, async (req, res) => {
+  try {
+    if (!db) throw new Error("DB not ready");
+
+    const snapshot = await db.collection("votes").orderBy("createdAt","desc").get();
+
+    const votes = [];
+    snapshot.forEach(doc => votes.push(doc.data()));
+
+    res.json(votes);
+
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ==========================
+// 📊 ADMIN - ALL JURY
 // ==========================
 app.get("/admin/jury", verifyAdmin, async (req, res) => {
   try {
     if (!db) throw new Error("DB not ready");
 
-    const snapshot = await db.collection("jury").get();
+    const snapshot = await db.collection("jury").orderBy("createdAt","desc").get();
 
-    const data = [];
-    snapshot.forEach(doc => data.push(doc.data()));
+    const jury = [];
+    snapshot.forEach(doc => jury.push(doc.data()));
 
-    res.json(data);
+    res.json(jury);
 
   } catch (err) {
-    res.status(500).json({
-      error: err.message
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ==========================
+// 📊 ADMIN - LEADERBOARD
+// ==========================
+app.get("/admin/leaderboard", verifyAdmin, async (req, res) => {
+  try {
+    if (!db) throw new Error("DB not ready");
+
+    const votesSnap = await db.collection("votes").get();
+    const jurySnap = await db.collection("jury").get();
+
+    const votes = {};
+    const jury = {};
+
+    votesSnap.forEach(doc => {
+      const d = doc.data();
+      votes[d.contestant] = (votes[d.contestant] || 0) + d.votes;
     });
+
+    jurySnap.forEach(doc => {
+      const d = doc.data();
+      jury[d.contestant] = (jury[d.contestant] || 0) + d.score;
+    });
+
+    const allContestants = new Set([...Object.keys(votes), ...Object.keys(jury)]);
+
+    const leaderboard = [];
+
+    allContestants.forEach(code => {
+      const v = votes[code] || 0;
+      const j = jury[code] || 0;
+
+      const total = (v * 0.7) + (j * 0.3);
+
+      leaderboard.push({
+        code,
+        votes: v,
+        jury: j,
+        total
+      });
+    });
+
+    leaderboard.sort((a, b) => b.total - a.total);
+
+    res.json(leaderboard);
+
+  } catch (err) {
+    res.status(500).json({ error: err.message });
   }
 });
 
@@ -272,7 +337,7 @@ app.post("/api/vote", async (req, res) => {
 });
 
 // ==========================
-// 🧠 LEADERBOARD (70% / 30%)
+// 🧠 LEADERBOARD (PUBLIC)
 // ==========================
 app.get("/api/leaderboard", async (req, res) => {
   try {
