@@ -4,7 +4,7 @@ const cors = require("cors");
 const QRCode = require("qrcode");
 const admin = require("firebase-admin");
 const jwt = require("jsonwebtoken");
-const bcrypt = require("bcrypt");
+
 
 const app = express();
 
