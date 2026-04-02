@@ -5,7 +5,6 @@ const QRCode = require("qrcode");
 const admin = require("firebase-admin");
 const jwt = require("jsonwebtoken");
 
-
 const app = express();
 
 app.use(cors());
@@ -96,6 +95,26 @@ app.get("/admin/stats", verifyAdmin, async (req, res) => {
   }
 });
 
+// ==========================
+// 🧑‍⚖️ ADMIN JURY VIEW (NEW)
+// ==========================
+app.get("/admin/jury", verifyAdmin, async (req, res) => {
+  try {
+    if (!db) throw new Error("DB not ready");
+
+    const snapshot = await db.collection("jury").get();
+
+    const data = [];
+    snapshot.forEach(doc => data.push(doc.data()));
+
+    res.json(data);
+
+  } catch (err) {
+    res.status(500).json({
+      error: err.message
+    });
+  }
+});
 
 // ==========================
 // 🔐 VERIFY PAYMENT
@@ -153,7 +172,6 @@ app.post("/verify", async (req, res) => {
   }
 });
 
-
 // ==========================
 // 🎫 SCAN
 // ==========================
@@ -196,7 +214,6 @@ app.post("/scan", async (req, res) => {
   }
 });
 
-
 // ==========================
 // 📊 TICKETS
 // ==========================
@@ -219,7 +236,6 @@ app.get("/tickets", async (req, res) => {
     });
   }
 });
-
 
 // ==========================
 // 🗳️ VOTING
@@ -254,7 +270,6 @@ app.post("/api/vote", async (req, res) => {
     });
   }
 });
-
 
 // ==========================
 // 🧠 LEADERBOARD (70% / 30%)
@@ -310,7 +325,6 @@ app.get("/api/leaderboard", async (req, res) => {
   }
 });
 
-
 // ==========================
 // 🧑‍⚖️ JURY
 // ==========================
@@ -342,14 +356,12 @@ app.post("/api/jury", async (req, res) => {
   }
 });
 
-
 // ==========================
 // ROOT
 // ==========================
 app.get("/", (req, res) => {
   res.send("STARS backend running 🚀");
 });
-
 
 // ==========================
 // START SERVER
