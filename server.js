@@ -11,37 +11,34 @@ app.use(express.json());
 
 const PAYSTACK_SECRET = process.env.PAYSTACK_SECRET;
 
-// 🔥 SAFE FIREBASE INITIALIZATION
+// ==========================
+// 🔥 FIREBASE INIT (SAFE)
+// ==========================
 let db = null;
 
 try {
   const raw = process.env.FIREBASE_KEY;
 
-  if (!raw) {
-    throw new Error("FIREBASE_KEY is missing from environment variables");
+  if (raw) {
+    const serviceAccount = JSON.parse(raw);
+    serviceAccount.private_key = serviceAccount.private_key.replace(/\\n/g, '\n');
+
+    if (!admin.apps.length) {
+      admin.initializeApp({
+        credential: admin.credential.cert(serviceAccount)
+      });
+    }
+
+    db = admin.firestore();
+    console.log("✅ Firebase initialized");
   }
-
-  const serviceAccount = JSON.parse(raw);
-
-  serviceAccount.private_key = serviceAccount.private_key.replace(/\\n/g, '\n');
-
-  if (!admin.apps.length) {
-    admin.initializeApp({
-      credential: admin.credential.cert(serviceAccount)
-    });
-  }
-
-  db = admin.firestore();
-
-  console.log("✅ Firebase initialized successfully");
 
 } catch (err) {
-  console.error("❌ Firebase initialization error:");
-  console.error(err.message);
+  console.error("❌ Firebase init error:", err.message);
 }
 
 // ==========================
-// 🔐 VERIFY ROUTE
+// 🔐 VERIFY PAYMENT
 // ==========================
 app.post("/verify", async (req, res) => {
   const { reference, ticket, qty, email } = req.body;
@@ -60,13 +57,7 @@ app.post("/verify", async (req, res) => {
 
     if (data && data.status === "success") {
 
-      const qrData = JSON.stringify({
-        reference,
-        ticket,
-        qty,
-        email
-      });
-
+      const qrData = JSON.stringify({ reference, ticket, qty, email });
       const qrImage = await QRCode.toDataURL(qrData);
 
       if (db) {
@@ -104,12 +95,14 @@ app.post("/verify", async (req, res) => {
 
 
 // ==========================
-// 🎫 SCAN ROUTE
+// 🎫 SCAN
 // ==========================
 app.post("/scan", async (req, res) => {
   const { reference } = req.body;
 
   try {
+    if (!db) throw new Error("Database not initialized");
+
     const docRef = db.collection("tickets").doc(reference);
     const doc = await docRef.get();
 
@@ -145,22 +138,18 @@ app.post("/scan", async (req, res) => {
 
 
 // ==========================
-// 📊 ADMIN - TICKETS
+// 📊 TICKETS
 // ==========================
 app.get("/tickets", async (req, res) => {
   try {
+    if (!db) throw new Error("DB not ready");
+
     const snapshot = await db.collection("tickets").get();
 
     const tickets = [];
-    snapshot.forEach(doc => {
-      tickets.push(doc.data());
-    });
+    snapshot.forEach(doc => tickets.push(doc.data()));
 
-    res.json({
-      success: true,
-      count: tickets.length,
-      tickets
-    });
+    res.json({ success: true, count: tickets.length, tickets });
 
   } catch (err) {
     res.status(500).json({
@@ -173,43 +162,31 @@ app.get("/tickets", async (req, res) => {
 
 
 // ==========================
-// 🗳️ VOTING SYSTEM (NEW)
+// 🗳️ VOTING (FRONTEND MATCHED)
 // ==========================
 
-// Submit vote
-app.post("/vote", async (req, res) => {
+// Vote
+app.post("/api/vote", async (req, res) => {
   try {
-    const { contestantId, voterId } = req.body;
+    if (!db) throw new Error("DB not ready");
 
-    if (!contestantId || !voterId) {
-      return res.status(400).json({
-        success: false,
-        message: "Missing fields"
-      });
-    }
+    const { contestant, votes, paymentRef, email, amount, referral } = req.body;
 
-    // Prevent double voting
-    const existingVote = await db.collection("votes")
-      .where("voterId", "==", voterId)
-      .get();
-
-    if (!existingVote.empty) {
-      return res.json({
-        success: false,
-        message: "You have already voted"
-      });
+    if (!contestant || !votes || !email) {
+      return res.status(400).json({ success: false, message: "Missing fields" });
     }
 
     await db.collection("votes").add({
-      contestantId,
-      voterId,
+      contestant,
+      votes,
+      paymentRef,
+      email,
+      amount,
+      referral,
       createdAt: new Date()
     });
 
-    return res.json({
-      success: true,
-      message: "Vote recorded"
-    });
+    res.json({ success: true });
 
   } catch (err) {
     res.status(500).json({
@@ -221,27 +198,63 @@ app.post("/vote", async (req, res) => {
 });
 
 
-// Get vote counts (leaderboard)
-app.get("/votes", async (req, res) => {
+// Leaderboard
+app.get("/api/leaderboard", async (req, res) => {
   try {
+    if (!db) throw new Error("DB not ready");
+
     const snapshot = await db.collection("votes").get();
 
     const counts = {};
 
     snapshot.forEach(doc => {
       const data = doc.data();
-      counts[data.contestantId] = (counts[data.contestantId] || 0) + 1;
+      counts[data.contestant] = (counts[data.contestant] || 0) + data.votes;
     });
 
-    res.json({
-      success: true,
-      leaderboard: counts
-    });
+    const leaderboard = Object.keys(counts).map(code => ({
+      code: code,
+      votes: counts[code],
+      jury: 0,
+      total: counts[code]
+    }));
+
+    res.json(leaderboard);
 
   } catch (err) {
     res.status(500).json({
       success: false,
-      message: "Failed to fetch votes",
+      message: "Leaderboard failed",
+      error: err.message
+    });
+  }
+});
+
+
+// Jury
+app.post("/api/jury", async (req, res) => {
+  try {
+    if (!db) throw new Error("DB not ready");
+
+    const { contestant, score, email } = req.body;
+
+    if (!contestant || !score || !email) {
+      return res.status(400).json({ success: false, message: "Missing fields" });
+    }
+
+    await db.collection("jury").add({
+      contestant,
+      score,
+      email,
+      createdAt: new Date()
+    });
+
+    res.json({ success: true });
+
+  } catch (err) {
+    res.status(500).json({
+      success: false,
+      message: "Jury failed",
       error: err.message
     });
   }
@@ -252,7 +265,7 @@ app.get("/votes", async (req, res) => {
 // ROOT
 // ==========================
 app.get("/", (req, res) => {
-  res.send("STARS backend running");
+  res.send("STARS backend running 🚀");
 });
 
 
@@ -261,6 +274,8 @@ app.get("/", (req, res) => {
 // ==========================
 app.get("/test-db", async (req, res) => {
   try {
+    if (!db) throw new Error("DB not ready");
+
     await db.collection("test").doc("check").set({
       status: "connected",
       time: new Date()
@@ -278,7 +293,7 @@ app.get("/test-db", async (req, res) => {
 
 
 // ==========================
-// PORT
+// START SERVER
 // ==========================
 const PORT = process.env.PORT || 10000;
 
