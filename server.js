@@ -3,6 +3,8 @@ const axios = require("axios");
 const cors = require("cors");
 const QRCode = require("qrcode");
 const admin = require("firebase-admin");
+const jwt = require("jsonwebtoken");
+const bcrypt = require("bcrypt");
 
 const app = express();
 
@@ -10,6 +12,7 @@ app.use(cors());
 app.use(express.json());
 
 const PAYSTACK_SECRET = process.env.PAYSTACK_SECRET;
+const JWT_SECRET = process.env.JWT_SECRET || "secret";
 
 // ==========================
 // 🔥 FIREBASE INIT (SAFE)
@@ -36,6 +39,63 @@ try {
 } catch (err) {
   console.error("❌ Firebase init error:", err.message);
 }
+
+// ==========================
+// 🔐 ADMIN LOGIN
+// ==========================
+app.post("/admin/login", async (req, res) => {
+  const { email, password } = req.body;
+
+  const adminEmail = process.env.ADMIN_EMAIL;
+  const adminPassword = process.env.ADMIN_PASSWORD;
+
+  if (email !== adminEmail || password !== adminPassword) {
+    return res.status(401).json({ error: "Invalid credentials" });
+  }
+
+  const token = jwt.sign({ email }, JWT_SECRET, { expiresIn: "6h" });
+
+  res.json({ token });
+});
+
+// ==========================
+// 🛡️ MIDDLEWARE
+// ==========================
+function verifyAdmin(req, res, next) {
+  const token = req.headers.authorization?.split(" ")[1];
+
+  if (!token) return res.status(401).json({ error: "No token" });
+
+  try {
+    jwt.verify(token, JWT_SECRET);
+    next();
+  } catch {
+    res.status(403).json({ error: "Invalid token" });
+  }
+}
+
+// ==========================
+// 📊 ADMIN STATS
+// ==========================
+app.get("/admin/stats", verifyAdmin, async (req, res) => {
+  try {
+    if (!db) throw new Error("DB not ready");
+
+    const votesSnap = await db.collection("votes").get();
+    const jurySnap = await db.collection("jury").get();
+
+    res.json({
+      totalVotes: votesSnap.size,
+      totalJury: jurySnap.size
+    });
+
+  } catch (err) {
+    res.status(500).json({
+      error: err.message
+    });
+  }
+});
+
 
 // ==========================
 // 🔐 VERIFY PAYMENT
@@ -162,10 +222,8 @@ app.get("/tickets", async (req, res) => {
 
 
 // ==========================
-// 🗳️ VOTING (FRONTEND MATCHED)
+// 🗳️ VOTING
 // ==========================
-
-// Vote
 app.post("/api/vote", async (req, res) => {
   try {
     if (!db) throw new Error("DB not ready");
@@ -198,26 +256,48 @@ app.post("/api/vote", async (req, res) => {
 });
 
 
-// Leaderboard
+// ==========================
+// 🧠 LEADERBOARD (70% / 30%)
+// ==========================
 app.get("/api/leaderboard", async (req, res) => {
   try {
     if (!db) throw new Error("DB not ready");
 
-    const snapshot = await db.collection("votes").get();
+    const votesSnap = await db.collection("votes").get();
+    const jurySnap = await db.collection("jury").get();
 
-    const counts = {};
+    const votes = {};
+    const jury = {};
 
-    snapshot.forEach(doc => {
-      const data = doc.data();
-      counts[data.contestant] = (counts[data.contestant] || 0) + data.votes;
+    votesSnap.forEach(doc => {
+      const d = doc.data();
+      votes[d.contestant] = (votes[d.contestant] || 0) + d.votes;
     });
 
-    const leaderboard = Object.keys(counts).map(code => ({
-      code: code,
-      votes: counts[code],
-      jury: 0,
-      total: counts[code]
-    }));
+    jurySnap.forEach(doc => {
+      const d = doc.data();
+      jury[d.contestant] = (jury[d.contestant] || 0) + d.score;
+    });
+
+    const allContestants = new Set([...Object.keys(votes), ...Object.keys(jury)]);
+
+    const leaderboard = [];
+
+    allContestants.forEach(code => {
+      const v = votes[code] || 0;
+      const j = jury[code] || 0;
+
+      const total = (v * 0.7) + (j * 0.3);
+
+      leaderboard.push({
+        code,
+        votes: v,
+        jury: j,
+        total
+      });
+    });
+
+    leaderboard.sort((a, b) => b.total - a.total);
 
     res.json(leaderboard);
 
@@ -231,7 +311,9 @@ app.get("/api/leaderboard", async (req, res) => {
 });
 
 
-// Jury
+// ==========================
+// 🧑‍⚖️ JURY
+// ==========================
 app.post("/api/jury", async (req, res) => {
   try {
     if (!db) throw new Error("DB not ready");
@@ -266,29 +348,6 @@ app.post("/api/jury", async (req, res) => {
 // ==========================
 app.get("/", (req, res) => {
   res.send("STARS backend running 🚀");
-});
-
-
-// ==========================
-// FIREBASE TEST
-// ==========================
-app.get("/test-db", async (req, res) => {
-  try {
-    if (!db) throw new Error("DB not ready");
-
-    await db.collection("test").doc("check").set({
-      status: "connected",
-      time: new Date()
-    });
-
-    res.send("Firebase connected");
-
-  } catch (err) {
-    res.status(500).json({
-      message: "Error connecting to Firebase",
-      error: err.message
-    });
-  }
 });
 
 
