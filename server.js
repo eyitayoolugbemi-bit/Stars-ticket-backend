@@ -103,7 +103,7 @@ app.get("/admin/jury", verifyAdmin, async (req, res) => {
     const snapshot = await db.collection("jury").get();
 
     const data = [];
-    snapshot.forEach(doc => data.push(doc.data()));
+    snapshot.forEach(doc => data.push({ id: doc.id, ...doc.data() }));
 
     res.json(data);
 
@@ -113,7 +113,7 @@ app.get("/admin/jury", verifyAdmin, async (req, res) => {
 });
 
 // ==========================
-// 📊 ADMIN - VOTER HISTORY (NEW)
+// 📊 VOTER HISTORY
 // ==========================
 app.get("/admin/voter-history", verifyAdmin, async (req, res) => {
   try {
@@ -122,7 +122,7 @@ app.get("/admin/voter-history", verifyAdmin, async (req, res) => {
     const snapshot = await db.collection("votes").orderBy("createdAt", "desc").get();
 
     const votes = [];
-    snapshot.forEach(doc => votes.push(doc.data()));
+    snapshot.forEach(doc => votes.push({ id: doc.id, ...doc.data() }));
 
     res.json(votes);
 
@@ -132,128 +132,85 @@ app.get("/admin/voter-history", verifyAdmin, async (req, res) => {
 });
 
 // ==========================
-// 🔐 VERIFY PAYMENT
+// 🧹 DELETE SINGLE VOTE
 // ==========================
-app.post("/verify", async (req, res) => {
-  const { reference, ticket, qty, email } = req.body;
-
-  try {
-    const response = await axios.get(
-      "https://api.paystack.co/transaction/verify/" + reference,
-      {
-        headers: {
-          Authorization: "Bearer " + PAYSTACK_SECRET
-        }
-      }
-    );
-
-    const data = response.data.data;
-
-    if (data && data.status === "success") {
-
-      const qrData = JSON.stringify({ reference, ticket, qty, email });
-      const qrImage = await QRCode.toDataURL(qrData);
-
-      if (db) {
-        await db.collection("tickets").doc(reference).set({
-          reference,
-          ticket,
-          qty,
-          email,
-          qrData,
-          used: false,
-          createdAt: new Date()
-        });
-      }
-
-      return res.json({
-        success: true,
-        qr: qrImage,
-        reference
-      });
-
-    } else {
-      return res.json({
-        success: false,
-        message: "Payment not successful"
-      });
-    }
-
-  } catch (error) {
-    return res.status(500).json({
-      error: "Verification failed",
-      details: error.response?.data || error.message
-    });
-  }
-});
-
-// ==========================
-// 🎫 SCAN
-// ==========================
-app.post("/scan", async (req, res) => {
-  const { reference } = req.body;
-
-  try {
-    if (!db) throw new Error("Database not initialized");
-
-    const docRef = db.collection("tickets").doc(reference);
-    const doc = await docRef.get();
-
-    if (!doc.exists) {
-      return res.json({ success: false, message: "Invalid ticket" });
-    }
-
-    const ticketData = doc.data();
-
-    if (ticketData.used) {
-      return res.json({ success: false, message: "Ticket already used" });
-    }
-
-    await docRef.update({
-      used: true,
-      usedAt: new Date()
-    });
-
-    return res.json({
-      success: true,
-      message: "Access granted",
-      ticket: ticketData
-    });
-
-  } catch (err) {
-    res.status(500).json({
-      success: false,
-      message: "Server error",
-      error: err.message
-    });
-  }
-});
-
-// ==========================
-// 📊 TICKETS
-// ==========================
-app.get("/tickets", async (req, res) => {
+app.delete("/admin/vote/:id", verifyAdmin, async (req, res) => {
   try {
     if (!db) throw new Error("DB not ready");
 
-    const snapshot = await db.collection("tickets").get();
+    const id = req.params.id;
 
-    const tickets = [];
-    snapshot.forEach(doc => tickets.push(doc.data()));
+    await db.collection("votes").doc(id).delete();
 
-    res.json({ success: true, count: tickets.length, tickets });
+    res.json({ success: true, message: "Vote deleted" });
+
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// ==========================
+// 🧹 DELETE ALL VOTES
+// ==========================
+app.delete("/admin/votes/reset", verifyAdmin, async (req, res) => {
+  try {
+    if (!db) throw new Error("DB not ready");
+
+    const snapshot = await db.collection("votes").get();
+
+    const batch = db.batch();
+
+    snapshot.forEach(doc => {
+      batch.delete(doc.ref);
+    });
+
+    await batch.commit();
+
+    res.json({
+      success: true,
+      message: "All votes deleted"
+    });
 
   } catch (err) {
     res.status(500).json({
       success: false,
-      message: "Failed to fetch tickets",
       error: err.message
     });
   }
 });
 
 // ==========================
-// 🗳️ VOTING
+// 🧹 RESET JURY SCORES
+// ==========================
+app.delete("/admin/jury/reset", verifyAdmin, async (req, res) => {
+  try {
+    if (!db) throw new Error("DB not ready");
+
+    const snapshot = await db.collection("jury").get();
+
+    const batch = db.batch();
+
+    snapshot.forEach(doc => {
+      batch.delete(doc.ref);
+    });
+
+    await batch.commit();
+
+    res.json({
+      success: true,
+      message: "All jury scores deleted"
+    });
+
+  } catch (err) {
+    res.status(500).json({
+      success: false,
+      error: err.message
+    });
+  }
+});
+
+// ==========================
+// 🗳️ VOTING (UPDATED WITH ID)
 // ==========================
 app.post("/api/vote", async (req, res) => {
   try {
@@ -265,7 +222,7 @@ app.post("/api/vote", async (req, res) => {
       return res.status(400).json({ success: false, message: "Missing fields" });
     }
 
-    await db.collection("votes").add({
+    const docRef = await db.collection("votes").add({
       contestant,
       votes,
       paymentRef,
@@ -275,7 +232,7 @@ app.post("/api/vote", async (req, res) => {
       createdAt: new Date()
     });
 
-    res.json({ success: true });
+    res.json({ success: true, id: docRef.id });
 
   } catch (err) {
     res.status(500).json({
