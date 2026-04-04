@@ -53,7 +53,11 @@ try {
 
   if (raw) {
     const serviceAccount = JSON.parse(raw);
-    serviceAccount.private_key = serviceAccount.private_key.replace(/\n/g, '\n');
+
+    // safer private key handling
+    if (serviceAccount.private_key) {
+      serviceAccount.private_key = serviceAccount.private_key.replace(/\\n/g, '\n');
+    }
 
     if (!admin.apps.length) {
       admin.initializeApp({
@@ -102,6 +106,31 @@ function verifyAdmin(req, res, next) {
     res.status(403).json({ error: "Invalid token" });
   }
 }
+
+// ==========================
+// 📧 TEST EMAIL ROUTE (NEW)
+// ==========================
+app.get("/test-email", async (req, res) => {
+  try {
+
+    if (!transporter) {
+      return res.status(500).send("❌ Email not configured");
+    }
+
+    await transporter.sendMail({
+      from: `"STARS Test" <${EMAIL_USER}>`,
+      to: EMAIL_USER,
+      subject: "Test Email from STARS 🚀",
+      html: "<h2>Email is working perfectly ✅</h2>"
+    });
+
+    res.send("✅ Test email sent successfully");
+
+  } catch (err) {
+    console.error("❌ Test email error:", err.message);
+    res.status(500).send("❌ Email failed: " + err.message);
+  }
+});
 
 // ==========================
 // 📊 ADMIN STATS
@@ -168,9 +197,7 @@ app.delete("/admin/vote/:id", verifyAdmin, async (req, res) => {
   try {
     if (!db) throw new Error("DB not ready");
 
-    const id = req.params.id;
-
-    await db.collection("votes").doc(id).delete();
+    await db.collection("votes").doc(req.params.id).delete();
 
     res.json({ success: true, message: "Vote deleted" });
 
@@ -222,7 +249,7 @@ app.delete("/admin/jury/reset", verifyAdmin, async (req, res) => {
 });
 
 // ==========================
-// 🔐 VERIFY PAYMENT (FIXED)
+// 🔐 VERIFY PAYMENT (EMAIL + QR)
 // ==========================
 app.post("/verify", async (req, res) => {
   const { reference, ticket, qty, email } = req.body;
@@ -256,7 +283,6 @@ app.post("/verify", async (req, res) => {
         });
       }
 
-      // ✅ SAFE EMAIL SEND
       if (transporter && email) {
         try {
           await transporter.sendMail({
