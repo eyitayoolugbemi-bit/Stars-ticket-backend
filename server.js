@@ -251,24 +251,34 @@ app.delete("/admin/jury/reset", verifyAdmin, async (req, res) => {
 });
 
 // ==========================
-// 🔐 VERIFY PAYMENT (EMAIL + QR)
+// 🔐 VERIFY PAYMENT (EMAIL + QR + TEST MODE)
 // ==========================
 app.post("/verify", async (req, res) => {
-  const { reference, ticket, qty, email } = req.body;
+  const { reference, ticket, qty, email, testMode } = req.body;
 
   try {
-    const response = await axios.get(
-      "https://api.paystack.co/transaction/verify/" + reference,
-      {
-        headers: {
-          Authorization: "Bearer " + PAYSTACK_SECRET
+
+    let success = false;
+
+    // ✅ TEST MODE (bypass Paystack)
+    if (testMode === true) {
+      console.log("🧪 TEST MODE ACTIVE");
+      success = true;
+    } else {
+      const response = await axios.get(
+        "https://api.paystack.co/transaction/verify/" + reference,
+        {
+          headers: {
+            Authorization: "Bearer " + PAYSTACK_SECRET
+          }
         }
-      }
-    );
+      );
 
-    const data = response.data.data;
+      const data = response.data.data;
+      success = data && data.status === "success";
+    }
 
-    if (data && data.status === "success") {
+    if (success) {
 
       const qrData = JSON.stringify({ reference, ticket, qty, email });
       const qrImage = await QRCode.toDataURL(qrData);
