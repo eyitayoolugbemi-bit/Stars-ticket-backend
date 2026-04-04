@@ -4,7 +4,7 @@ const cors = require("cors");
 const QRCode = require("qrcode");
 const admin = require("firebase-admin");
 const jwt = require("jsonwebtoken");
-const nodemailer = require("nodemailer"); // ✅ ADDED
+const nodemailer = require("nodemailer");
 
 const app = express();
 
@@ -14,19 +14,34 @@ app.use(express.json());
 const PAYSTACK_SECRET = process.env.PAYSTACK_SECRET;
 const JWT_SECRET = process.env.JWT_SECRET || "secret";
 
-// ✅ EMAIL CONFIG (ADDED)
+// ==========================
+// ✅ EMAIL CONFIG (SAFE)
+// ==========================
 const EMAIL_USER = process.env.EMAIL_USER;
 const EMAIL_PASS = process.env.EMAIL_PASS;
 
-const transporter = nodemailer.createTransport({
-  host: "mail.starsgospel.ng",
-  port: 465,
-  secure: true,
-  auth: {
-    user: EMAIL_USER,
-    pass: EMAIL_PASS
+let transporter = null;
+
+if (EMAIL_USER && EMAIL_PASS) {
+  try {
+    transporter = nodemailer.createTransport({
+      host: "mail.starsgospel.ng",
+      port: 465,
+      secure: true,
+      auth: {
+        user: EMAIL_USER,
+        pass: EMAIL_PASS
+      }
+    });
+
+    console.log("✅ Email transporter ready");
+
+  } catch (err) {
+    console.error("❌ Email setup error:", err.message);
   }
-});
+} else {
+  console.warn("⚠️ Email credentials not set");
+}
 
 // ==========================
 // 🔥 FIREBASE INIT (SAFE)
@@ -174,22 +189,14 @@ app.delete("/admin/votes/reset", verifyAdmin, async (req, res) => {
     const snapshot = await db.collection("votes").get();
     const batch = db.batch();
 
-    snapshot.forEach(doc => {
-      batch.delete(doc.ref);
-    });
+    snapshot.forEach(doc => batch.delete(doc.ref));
 
     await batch.commit();
 
-    res.json({
-      success: true,
-      message: "All votes deleted"
-    });
+    res.json({ success: true, message: "All votes deleted" });
 
   } catch (err) {
-    res.status(500).json({
-      success: false,
-      error: err.message
-    });
+    res.status(500).json({ success: false, error: err.message });
   }
 });
 
@@ -203,27 +210,19 @@ app.delete("/admin/jury/reset", verifyAdmin, async (req, res) => {
     const snapshot = await db.collection("jury").get();
     const batch = db.batch();
 
-    snapshot.forEach(doc => {
-      batch.delete(doc.ref);
-    });
+    snapshot.forEach(doc => batch.delete(doc.ref));
 
     await batch.commit();
 
-    res.json({
-      success: true,
-      message: "All jury scores deleted"
-    });
+    res.json({ success: true, message: "All jury scores deleted" });
 
   } catch (err) {
-    res.status(500).json({
-      success: false,
-      error: err.message
-    });
+    res.status(500).json({ success: false, error: err.message });
   }
 });
 
 // ==========================
-// 🔐 VERIFY PAYMENT (UPDATED WITH EMAIL)
+// 🔐 VERIFY PAYMENT (FIXED)
 // ==========================
 app.post("/verify", async (req, res) => {
   const { reference, ticket, qty, email } = req.body;
@@ -257,29 +256,28 @@ app.post("/verify", async (req, res) => {
         });
       }
 
-      // ✅ SEND EMAIL WITH QR
-      try {
-        await transporter.sendMail({
-          from: `"STARS Tickets" <${EMAIL_USER}>`,
-          to: email,
-          subject: "Your STARS Grand Finale Ticket 🎟️",
-          html: `
-            <h2>STARS GRAND FINALE</h2>
-            <p><b>Ticket:</b> ${ticket}</p>
-            <p><b>Quantity:</b> ${qty}</p>
-            <p><b>Reference:</b> ${reference}</p>
-            <br/>
-            <p>Present this QR code at entry:</p>
-            <img src="${qrImage}" style="width:250px;" />
-            <br/><br/>
-            <p>See you at the Grand Finale!</p>
-          `
-        });
+      // ✅ SAFE EMAIL SEND
+      if (transporter && email) {
+        try {
+          await transporter.sendMail({
+            from: `"STARS Tickets" <${EMAIL_USER}>`,
+            to: email,
+            subject: "Your STARS Ticket 🎟️",
+            html: `
+              <h2>STARS GRAND FINALE</h2>
+              <p><b>Ticket:</b> ${ticket}</p>
+              <p><b>Qty:</b> ${qty}</p>
+              <p><b>Ref:</b> ${reference}</p>
+              <br/>
+              <img src="${qrImage}" style="width:250px;" />
+            `
+          });
 
-        console.log("📧 Email sent to", email);
+          console.log("📧 Email sent");
 
-      } catch (mailErr) {
-        console.error("❌ Email failed:", mailErr.message);
+        } catch (mailErr) {
+          console.error("❌ Email failed:", mailErr.message);
+        }
       }
 
       return res.json({
