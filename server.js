@@ -15,7 +15,7 @@ const PAYSTACK_SECRET = process.env.PAYSTACK_SECRET;
 const JWT_SECRET = process.env.JWT_SECRET || "secret";
 
 // ==========================
-// ✅ EMAIL CONFIG (SAFE)
+// ✅ EMAIL CONFIG (UPDATED)
 // ==========================
 const EMAIL_USER = process.env.EMAIL_USER;
 const EMAIL_PASS = process.env.EMAIL_PASS;
@@ -26,11 +26,14 @@ if (EMAIL_USER && EMAIL_PASS) {
   try {
     transporter = nodemailer.createTransport({
       host: "mail.starsgospel.ng",
-      port: 465,
-      secure: true,
+      port: 587,
+      secure: false,
       auth: {
         user: EMAIL_USER,
         pass: EMAIL_PASS
+      },
+      tls: {
+        rejectUnauthorized: false
       }
     });
 
@@ -54,7 +57,6 @@ try {
   if (raw) {
     const serviceAccount = JSON.parse(raw);
 
-    // safer private key handling
     if (serviceAccount.private_key) {
       serviceAccount.private_key = serviceAccount.private_key.replace(/\\n/g, '\n');
     }
@@ -108,7 +110,7 @@ function verifyAdmin(req, res, next) {
 }
 
 // ==========================
-// 📧 TEST EMAIL ROUTE (NEW)
+// 📧 TEST EMAIL ROUTE
 // ==========================
 app.get("/test-email", async (req, res) => {
   try {
