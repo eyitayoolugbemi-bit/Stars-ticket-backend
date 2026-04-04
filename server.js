@@ -4,6 +4,7 @@ const cors = require("cors");
 const QRCode = require("qrcode");
 const admin = require("firebase-admin");
 const jwt = require("jsonwebtoken");
+const nodemailer = require("nodemailer"); // ✅ ADDED
 
 const app = express();
 
@@ -12,6 +13,20 @@ app.use(express.json());
 
 const PAYSTACK_SECRET = process.env.PAYSTACK_SECRET;
 const JWT_SECRET = process.env.JWT_SECRET || "secret";
+
+// ✅ EMAIL CONFIG (ADDED)
+const EMAIL_USER = process.env.EMAIL_USER;
+const EMAIL_PASS = process.env.EMAIL_PASS;
+
+const transporter = nodemailer.createTransport({
+  host: "mail.starsgospel.ng",
+  port: 465,
+  secure: true,
+  auth: {
+    user: EMAIL_USER,
+    pass: EMAIL_PASS
+  }
+});
 
 // ==========================
 // 🔥 FIREBASE INIT (SAFE)
@@ -157,7 +172,6 @@ app.delete("/admin/votes/reset", verifyAdmin, async (req, res) => {
     if (!db) throw new Error("DB not ready");
 
     const snapshot = await db.collection("votes").get();
-
     const batch = db.batch();
 
     snapshot.forEach(doc => {
@@ -187,7 +201,6 @@ app.delete("/admin/jury/reset", verifyAdmin, async (req, res) => {
     if (!db) throw new Error("DB not ready");
 
     const snapshot = await db.collection("jury").get();
-
     const batch = db.batch();
 
     snapshot.forEach(doc => {
@@ -210,119 +223,123 @@ app.delete("/admin/jury/reset", verifyAdmin, async (req, res) => {
 });
 
 // ==========================
-// 🗳️ VOTING (UPDATED WITH ID)
+// 🔐 VERIFY PAYMENT (UPDATED WITH EMAIL)
 // ==========================
-app.post("/api/vote", async (req, res) => {
+app.post("/verify", async (req, res) => {
+  const { reference, ticket, qty, email } = req.body;
+
   try {
-    if (!db) throw new Error("DB not ready");
+    const response = await axios.get(
+      "https://api.paystack.co/transaction/verify/" + reference,
+      {
+        headers: {
+          Authorization: "Bearer " + PAYSTACK_SECRET
+        }
+      }
+    );
 
-    const { contestant, votes, paymentRef, email, amount, referral } = req.body;
+    const data = response.data.data;
 
-    if (!contestant || !votes || !email) {
-      return res.status(400).json({ success: false, message: "Missing fields" });
-    }
+    if (data && data.status === "success") {
 
-    const docRef = await db.collection("votes").add({
-      contestant,
-      votes,
-      paymentRef,
-      email,
-      amount,
-      referral,
-      createdAt: new Date()
-    });
+      const qrData = JSON.stringify({ reference, ticket, qty, email });
+      const qrImage = await QRCode.toDataURL(qrData);
 
-    res.json({ success: true, id: docRef.id });
+      if (db) {
+        await db.collection("tickets").doc(reference).set({
+          reference,
+          ticket,
+          qty,
+          email,
+          qrData,
+          used: false,
+          createdAt: new Date()
+        });
+      }
 
-  } catch (err) {
-    res.status(500).json({
-      success: false,
-      message: "Vote failed",
-      error: err.message
-    });
-  }
-});
+      // ✅ SEND EMAIL WITH QR
+      try {
+        await transporter.sendMail({
+          from: `"STARS Tickets" <${EMAIL_USER}>`,
+          to: email,
+          subject: "Your STARS Grand Finale Ticket 🎟️",
+          html: `
+            <h2>STARS GRAND FINALE</h2>
+            <p><b>Ticket:</b> ${ticket}</p>
+            <p><b>Quantity:</b> ${qty}</p>
+            <p><b>Reference:</b> ${reference}</p>
+            <br/>
+            <p>Present this QR code at entry:</p>
+            <img src="${qrImage}" style="width:250px;" />
+            <br/><br/>
+            <p>See you at the Grand Finale!</p>
+          `
+        });
 
-// ==========================
-// 🧠 LEADERBOARD
-// ==========================
-app.get("/api/leaderboard", async (req, res) => {
-  try {
-    if (!db) throw new Error("DB not ready");
+        console.log("📧 Email sent to", email);
 
-    const votesSnap = await db.collection("votes").get();
-    const jurySnap = await db.collection("jury").get();
+      } catch (mailErr) {
+        console.error("❌ Email failed:", mailErr.message);
+      }
 
-    const votes = {};
-    const jury = {};
-
-    votesSnap.forEach(doc => {
-      const d = doc.data();
-      votes[d.contestant] = (votes[d.contestant] || 0) + d.votes;
-    });
-
-    jurySnap.forEach(doc => {
-      const d = doc.data();
-      jury[d.contestant] = (jury[d.contestant] || 0) + d.score;
-    });
-
-    const allContestants = new Set([...Object.keys(votes), ...Object.keys(jury)]);
-
-    const leaderboard = [];
-
-    allContestants.forEach(code => {
-      const v = votes[code] || 0;
-      const j = jury[code] || 0;
-
-      const total = (v * 0.7) + (j * 0.3);
-
-      leaderboard.push({
-        code,
-        votes: v,
-        jury: j,
-        total
+      return res.json({
+        success: true,
+        qr: qrImage,
+        reference
       });
-    });
 
-    leaderboard.sort((a, b) => b.total - a.total);
+    } else {
+      return res.json({
+        success: false,
+        message: "Payment not successful"
+      });
+    }
 
-    res.json(leaderboard);
-
-  } catch (err) {
-    res.status(500).json({
-      success: false,
-      message: "Leaderboard failed",
-      error: err.message
+  } catch (error) {
+    return res.status(500).json({
+      error: "Verification failed",
+      details: error.response?.data || error.message
     });
   }
 });
 
 // ==========================
-// 🧑‍⚖️ JURY
+// 🎫 SCAN
 // ==========================
-app.post("/api/jury", async (req, res) => {
+app.post("/scan", async (req, res) => {
+  const { reference } = req.body;
+
   try {
-    if (!db) throw new Error("DB not ready");
+    if (!db) throw new Error("Database not initialized");
 
-    const { contestant, score, email } = req.body;
+    const docRef = db.collection("tickets").doc(reference);
+    const doc = await docRef.get();
 
-    if (!contestant || !score || !email) {
-      return res.status(400).json({ success: false, message: "Missing fields" });
+    if (!doc.exists) {
+      return res.json({ success: false, message: "Invalid ticket" });
     }
 
-    await db.collection("jury").add({
-      contestant,
-      score,
-      email,
-      createdAt: new Date()
+    const ticketData = doc.data();
+
+    if (ticketData.used) {
+      return res.json({ success: false, message: "Ticket already used" });
+    }
+
+    await docRef.update({
+      used: true,
+      usedAt: new Date()
     });
 
-    res.json({ success: true });
+    return res.json({
+      success: true,
+      message: "Access granted",
+      ticket: ticketData
+    });
 
   } catch (err) {
     res.status(500).json({
       success: false,
-      message: "Jury failed",
+      message: "Server error",
       error: err.message
     });
   }
