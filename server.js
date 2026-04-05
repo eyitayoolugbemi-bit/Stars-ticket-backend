@@ -251,7 +251,7 @@ app.delete("/admin/jury/reset", verifyAdmin, async (req, res) => {
 });
 
 // ==========================
-// 🔐 VERIFY PAYMENT (FIXED TEST MODE)
+// 🔐 VERIFY PAYMENT (FIXED)
 // ==========================
 app.post("/verify", async (req, res) => {
   const { reference, ticket, qty, email, testMode } = req.body;
@@ -260,15 +260,13 @@ app.post("/verify", async (req, res) => {
 
     let success = false;
 
-    // ✅ TEST MODE FIRST (NO PAYSTACK CALL)
+    // ✅ TEST MODE FIRST
     if (testMode === true) {
       console.log("🧪 TEST MODE ACTIVE");
-
       success = true;
 
     } else {
 
-      // ONLY CALL PAYSTACK IN REAL MODE
       const response = await axios.get(
         "https://api.paystack.co/transaction/verify/" + reference,
         {
@@ -299,27 +297,25 @@ app.post("/verify", async (req, res) => {
         });
       }
 
+      // ✅ NON-BLOCKING EMAIL (FIX FOR TIMEOUT)
       if (transporter && email) {
-        try {
-          await transporter.sendMail({
-            from: `"STARS Tickets" <${EMAIL_USER}>`,
-            to: email,
-            subject: "Your STARS Ticket 🎟️",
-            html: `
-              <h2>STARS GRAND FINALE</h2>
-              <p><b>Ticket:</b> ${ticket}</p>
-              <p><b>Qty:</b> ${qty}</p>
-              <p><b>Ref:</b> ${reference}</p>
-              <br/>
-              <img src="${qrImage}" style="width:250px;" />
-            `
-          });
-
-          console.log("📧 Email sent");
-
-        } catch (mailErr) {
-          console.error("❌ Email failed:", mailErr.message);
-        }
+        transporter.sendMail({
+          from: `"STARS Tickets" <${EMAIL_USER}>`,
+          to: email,
+          subject: "Your STARS Ticket 🎟️",
+          html: `
+            <h2>STARS GRAND FINALE</h2>
+            <p><b>Ticket:</b> ${ticket}</p>
+            <p><b>Qty:</b> ${qty}</p>
+            <p><b>Ref:</b> ${reference}</p>
+            <br/>
+            <img src="${qrImage}" style="width:250px;" />
+          `
+        }).then(() => {
+          console.log("📧 Email sent successfully");
+        }).catch(err => {
+          console.error("❌ Email failed:", err.message);
+        });
       }
 
       return res.json({
