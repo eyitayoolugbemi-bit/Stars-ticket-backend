@@ -251,7 +251,7 @@ app.delete("/admin/jury/reset", verifyAdmin, async (req, res) => {
 });
 
 // ==========================
-// 🔐 VERIFY PAYMENT (EMAIL + QR + TEST MODE)
+// 🔐 VERIFY PAYMENT (FIXED TEST MODE)
 // ==========================
 app.post("/verify", async (req, res) => {
   const { reference, ticket, qty, email, testMode } = req.body;
@@ -260,11 +260,15 @@ app.post("/verify", async (req, res) => {
 
     let success = false;
 
-    // ✅ TEST MODE (bypass Paystack)
+    // ✅ TEST MODE FIRST (NO PAYSTACK CALL)
     if (testMode === true) {
       console.log("🧪 TEST MODE ACTIVE");
+
       success = true;
+
     } else {
+
+      // ONLY CALL PAYSTACK IN REAL MODE
       const response = await axios.get(
         "https://api.paystack.co/transaction/verify/" + reference,
         {
