@@ -251,7 +251,26 @@ app.delete("/admin/jury/reset", verifyAdmin, async (req, res) => {
 });
 
 // ==========================
-// 🔐 VERIFY PAYMENT (FIXED)
+// 🆕 QR IMAGE ENDPOINT (ADDED)
+// ==========================
+app.get("/qr/:reference.png", async (req, res) => {
+  try {
+    const { reference } = req.params;
+
+    const qrData = JSON.stringify({ reference });
+
+    const buffer = await QRCode.toBuffer(qrData);
+
+    res.setHeader("Content-Type", "image/png");
+    res.send(buffer);
+
+  } catch (err) {
+    res.status(500).send("QR generation failed");
+  }
+});
+
+// ==========================
+// 🔐 VERIFY PAYMENT (UPDATED EMAIL)
 // ==========================
 app.post("/verify", async (req, res) => {
   const { reference, ticket, qty, email, testMode } = req.body;
@@ -260,7 +279,6 @@ app.post("/verify", async (req, res) => {
 
     let success = false;
 
-    // ✅ TEST MODE FIRST
     if (testMode === true) {
       console.log("🧪 TEST MODE ACTIVE");
       success = true;
@@ -283,7 +301,6 @@ app.post("/verify", async (req, res) => {
     if (success) {
 
       const qrData = JSON.stringify({ reference, ticket, qty, email });
-      const qrImage = await QRCode.toDataURL(qrData);
 
       if (db) {
         await db.collection("tickets").doc(reference).set({
@@ -297,7 +314,7 @@ app.post("/verify", async (req, res) => {
         });
       }
 
-      // ✅ NON-BLOCKING EMAIL (FIX FOR TIMEOUT)
+      // NON-BLOCKING EMAIL (UPDATED TO URL)
       if (transporter && email) {
         transporter.sendMail({
           from: `"STARS Tickets" <${EMAIL_USER}>`,
@@ -309,7 +326,7 @@ app.post("/verify", async (req, res) => {
             <p><b>Qty:</b> ${qty}</p>
             <p><b>Ref:</b> ${reference}</p>
             <br/>
-            <img src="${qrImage}" style="width:250px;" />
+            <img src="https://stars-ticket-backend.onrender.com/qr/${reference}.png" style="width:250px;" />
           `
         }).then(() => {
           console.log("📧 Email sent successfully");
@@ -320,7 +337,6 @@ app.post("/verify", async (req, res) => {
 
       return res.json({
         success: true,
-        qr: qrImage,
         reference
       });
 
