@@ -15,15 +15,17 @@ const PAYSTACK_SECRET = process.env.PAYSTACK_SECRET;
 const JWT_SECRET = process.env.JWT_SECRET || "secret";
 
 // ==========================
-// ✅ EMAIL CONFIG (UPGRADED)
+// ✅ EMAIL CONFIG (UPGRADED WITH FALLBACK)
 // ==========================
 const EMAIL_USER = process.env.EMAIL_USER;
 const EMAIL_PASS = process.env.EMAIL_PASS;
 
 let transporter = null;
+let backupTransporter = null;
 
 if (EMAIL_USER && EMAIL_PASS) {
   try {
+    // PRIMARY SMTP (your domain)
     transporter = nodemailer.createTransport({
       host: "mail.starsgospel.ng",
       port: 587,
@@ -40,7 +42,18 @@ if (EMAIL_USER && EMAIL_PASS) {
       socketTimeout: 15000
     });
 
-    console.log("✅ Email transporter ready");
+    // BACKUP SMTP (GMAIL)
+    if (process.env.GMAIL_USER && process.env.GMAIL_PASS) {
+      backupTransporter = nodemailer.createTransport({
+        service: "gmail",
+        auth: {
+          user: process.env.GMAIL_USER,
+          pass: process.env.GMAIL_PASS
+        }
+      });
+    }
+
+    console.log("✅ Email transporter ready (Primary + Backup)");
 
   } catch (err) {
     console.error("❌ Email setup error:", err.message);
@@ -50,24 +63,35 @@ if (EMAIL_USER && EMAIL_PASS) {
 }
 
 // ==========================
-// 🔁 EMAIL RETRY FUNCTION
+// 🔁 EMAIL WITH FAILOVER
 // ==========================
-async function sendEmailWithRetry(mailOptions, retries = 3) {
-  for (let i = 0; i < retries; i++) {
-    try {
-      await transporter.sendMail(mailOptions);
-      console.log("📧 Email sent successfully");
-      return;
-    } catch (err) {
-      console.error(`❌ Email attempt ${i + 1} failed:`, err.message);
-
-      if (i === retries - 1) {
-        console.error("❌ All email attempts failed");
-      } else {
+async function sendEmailWithRetry(mailOptions, retries = 2) {
+  // Try primary first
+  if (transporter) {
+    for (let i = 0; i < retries; i++) {
+      try {
+        await transporter.sendMail(mailOptions);
+        console.log("📧 Email sent via PRIMARY");
+        return;
+      } catch (err) {
+        console.error(`❌ Primary attempt ${i + 1} failed:`, err.message);
         await new Promise(res => setTimeout(res, 3000));
       }
     }
   }
+
+  // Fallback to Gmail
+  if (backupTransporter) {
+    try {
+      await backupTransporter.sendMail(mailOptions);
+      console.log("📧 Email sent via BACKUP (Gmail)");
+      return;
+    } catch (err) {
+      console.error("❌ Backup also failed:", err.message);
+    }
+  }
+
+  console.error("❌ All email methods failed");
 }
 
 // ==========================
@@ -183,9 +207,8 @@ app.get("/admin/stats", verifyAdmin, async (req, res) => {
 app.get("/qr/:reference.png", async (req, res) => {
   try {
     const { reference } = req.params;
-    const qrData = JSON.stringify({ reference });
 
-    const buffer = await QRCode.toBuffer(qrData);
+    const buffer = await QRCode.toBuffer(JSON.stringify({ reference }));
 
     res.setHeader("Content-Type", "image/png");
     res.send(buffer);
@@ -196,7 +219,7 @@ app.get("/qr/:reference.png", async (req, res) => {
 });
 
 // ==========================
-// 🔐 VERIFY PAYMENT (FINAL)
+// 🔐 VERIFY PAYMENT
 // ==========================
 app.post("/verify", async (req, res) => {
   const { reference, ticket, qty, email, testMode } = req.body;
@@ -238,8 +261,8 @@ app.post("/verify", async (req, res) => {
         });
       }
 
-      // ✅ EMAIL WITH RETRY (NON-BLOCKING)
-      if (transporter && email) {
+      // ✅ EMAIL (WITH FALLBACK)
+      if ((transporter || backupTransporter) && email) {
         const mailOptions = {
           from: `"STARS Tickets" <${EMAIL_USER}>`,
           to: email,
@@ -257,10 +280,7 @@ app.post("/verify", async (req, res) => {
         sendEmailWithRetry(mailOptions);
       }
 
-      return res.json({
-        success: true,
-        reference
-      });
+      return res.json({ success: true, reference });
 
     } else {
       return res.json({
@@ -320,14 +340,10 @@ app.post("/scan", async (req, res) => {
 });
 
 // ==========================
-// ROOT
-// ==========================
 app.get("/", (req, res) => {
   res.send("STARS backend running 🚀");
 });
 
-// ==========================
-// START SERVER
 // ==========================
 const PORT = process.env.PORT || 10000;
 
