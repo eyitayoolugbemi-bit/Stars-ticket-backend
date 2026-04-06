@@ -15,7 +15,7 @@ const PAYSTACK_SECRET = process.env.PAYSTACK_SECRET;
 const JWT_SECRET = process.env.JWT_SECRET || "secret";
 
 // ==========================
-// ✅ EMAIL CONFIG (UPDATED)
+// ✅ EMAIL CONFIG (UPGRADED)
 // ==========================
 const EMAIL_USER = process.env.EMAIL_USER;
 const EMAIL_PASS = process.env.EMAIL_PASS;
@@ -34,7 +34,10 @@ if (EMAIL_USER && EMAIL_PASS) {
       },
       tls: {
         rejectUnauthorized: false
-      }
+      },
+      connectionTimeout: 10000,
+      greetingTimeout: 10000,
+      socketTimeout: 15000
     });
 
     console.log("✅ Email transporter ready");
@@ -44,6 +47,27 @@ if (EMAIL_USER && EMAIL_PASS) {
   }
 } else {
   console.warn("⚠️ Email credentials not set");
+}
+
+// ==========================
+// 🔁 EMAIL RETRY FUNCTION
+// ==========================
+async function sendEmailWithRetry(mailOptions, retries = 3) {
+  for (let i = 0; i < retries; i++) {
+    try {
+      await transporter.sendMail(mailOptions);
+      console.log("📧 Email sent successfully");
+      return;
+    } catch (err) {
+      console.error(`❌ Email attempt ${i + 1} failed:`, err.message);
+
+      if (i === retries - 1) {
+        console.error("❌ All email attempts failed");
+      } else {
+        await new Promise(res => setTimeout(res, 3000));
+      }
+    }
+  }
 }
 
 // ==========================
@@ -114,7 +138,6 @@ function verifyAdmin(req, res, next) {
 // ==========================
 app.get("/test-email", async (req, res) => {
   try {
-
     if (!transporter) {
       return res.status(500).send("❌ Email not configured");
     }
@@ -155,108 +178,11 @@ app.get("/admin/stats", verifyAdmin, async (req, res) => {
 });
 
 // ==========================
-// 🧑‍⚖️ ADMIN JURY VIEW
-// ==========================
-app.get("/admin/jury", verifyAdmin, async (req, res) => {
-  try {
-    if (!db) throw new Error("DB not ready");
-
-    const snapshot = await db.collection("jury").get();
-
-    const data = [];
-    snapshot.forEach(doc => data.push({ id: doc.id, ...doc.data() }));
-
-    res.json(data);
-
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
-});
-
-// ==========================
-// 📊 VOTER HISTORY
-// ==========================
-app.get("/admin/voter-history", verifyAdmin, async (req, res) => {
-  try {
-    if (!db) throw new Error("DB not ready");
-
-    const snapshot = await db.collection("votes").orderBy("createdAt", "desc").get();
-
-    const votes = [];
-    snapshot.forEach(doc => votes.push({ id: doc.id, ...doc.data() }));
-
-    res.json(votes);
-
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
-});
-
-// ==========================
-// 🧹 DELETE SINGLE VOTE
-// ==========================
-app.delete("/admin/vote/:id", verifyAdmin, async (req, res) => {
-  try {
-    if (!db) throw new Error("DB not ready");
-
-    await db.collection("votes").doc(req.params.id).delete();
-
-    res.json({ success: true, message: "Vote deleted" });
-
-  } catch (err) {
-    res.status(500).json({ success: false, error: err.message });
-  }
-});
-
-// ==========================
-// 🧹 DELETE ALL VOTES
-// ==========================
-app.delete("/admin/votes/reset", verifyAdmin, async (req, res) => {
-  try {
-    if (!db) throw new Error("DB not ready");
-
-    const snapshot = await db.collection("votes").get();
-    const batch = db.batch();
-
-    snapshot.forEach(doc => batch.delete(doc.ref));
-
-    await batch.commit();
-
-    res.json({ success: true, message: "All votes deleted" });
-
-  } catch (err) {
-    res.status(500).json({ success: false, error: err.message });
-  }
-});
-
-// ==========================
-// 🧹 RESET JURY SCORES
-// ==========================
-app.delete("/admin/jury/reset", verifyAdmin, async (req, res) => {
-  try {
-    if (!db) throw new Error("DB not ready");
-
-    const snapshot = await db.collection("jury").get();
-    const batch = db.batch();
-
-    snapshot.forEach(doc => batch.delete(doc.ref));
-
-    await batch.commit();
-
-    res.json({ success: true, message: "All jury scores deleted" });
-
-  } catch (err) {
-    res.status(500).json({ success: false, error: err.message });
-  }
-});
-
-// ==========================
-// 🆕 QR IMAGE ENDPOINT (ADDED)
+// 🆕 QR IMAGE ENDPOINT
 // ==========================
 app.get("/qr/:reference.png", async (req, res) => {
   try {
     const { reference } = req.params;
-
     const qrData = JSON.stringify({ reference });
 
     const buffer = await QRCode.toBuffer(qrData);
@@ -270,7 +196,7 @@ app.get("/qr/:reference.png", async (req, res) => {
 });
 
 // ==========================
-// 🔐 VERIFY PAYMENT (UPDATED EMAIL)
+// 🔐 VERIFY PAYMENT (FINAL)
 // ==========================
 app.post("/verify", async (req, res) => {
   const { reference, ticket, qty, email, testMode } = req.body;
@@ -282,9 +208,7 @@ app.post("/verify", async (req, res) => {
     if (testMode === true) {
       console.log("🧪 TEST MODE ACTIVE");
       success = true;
-
     } else {
-
       const response = await axios.get(
         "https://api.paystack.co/transaction/verify/" + reference,
         {
@@ -314,9 +238,9 @@ app.post("/verify", async (req, res) => {
         });
       }
 
-      // NON-BLOCKING EMAIL (UPDATED TO URL)
+      // ✅ EMAIL WITH RETRY (NON-BLOCKING)
       if (transporter && email) {
-        transporter.sendMail({
+        const mailOptions = {
           from: `"STARS Tickets" <${EMAIL_USER}>`,
           to: email,
           subject: "Your STARS Ticket 🎟️",
@@ -328,11 +252,9 @@ app.post("/verify", async (req, res) => {
             <br/>
             <img src="https://stars-ticket-backend.onrender.com/qr/${reference}.png" style="width:250px;" />
           `
-        }).then(() => {
-          console.log("📧 Email sent successfully");
-        }).catch(err => {
-          console.error("❌ Email failed:", err.message);
-        });
+        };
+
+        sendEmailWithRetry(mailOptions);
       }
 
       return res.json({
