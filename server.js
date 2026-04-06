@@ -15,21 +15,19 @@ const PAYSTACK_SECRET = process.env.PAYSTACK_SECRET;
 const JWT_SECRET = process.env.JWT_SECRET || "secret";
 
 // ==========================
-// ✅ EMAIL CONFIG (UPGRADED WITH FALLBACK)
+// ✅ EMAIL CONFIG (PORT 465)
 // ==========================
 const EMAIL_USER = process.env.EMAIL_USER;
 const EMAIL_PASS = process.env.EMAIL_PASS;
 
 let transporter = null;
-let backupTransporter = null;
 
 if (EMAIL_USER && EMAIL_PASS) {
   try {
-    // PRIMARY SMTP (your domain)
     transporter = nodemailer.createTransport({
       host: "mail.starsgospel.ng",
-      port: 587,
-      secure: false,
+      port: 465, // ✅ CHANGED TO 465
+      secure: true, // ✅ REQUIRED for 465
       auth: {
         user: EMAIL_USER,
         pass: EMAIL_PASS
@@ -37,23 +35,12 @@ if (EMAIL_USER && EMAIL_PASS) {
       tls: {
         rejectUnauthorized: false
       },
-      connectionTimeout: 10000,
-      greetingTimeout: 10000,
-      socketTimeout: 15000
+      connectionTimeout: 20000,
+      greetingTimeout: 20000,
+      socketTimeout: 20000
     });
 
-    // BACKUP SMTP (GMAIL)
-    if (process.env.GMAIL_USER && process.env.GMAIL_PASS) {
-      backupTransporter = nodemailer.createTransport({
-        service: "gmail",
-        auth: {
-          user: process.env.GMAIL_USER,
-          pass: process.env.GMAIL_PASS
-        }
-      });
-    }
-
-    console.log("✅ Email transporter ready (Primary + Backup)");
+    console.log("✅ Email transporter ready (PORT 465)");
 
   } catch (err) {
     console.error("❌ Email setup error:", err.message);
@@ -63,39 +50,28 @@ if (EMAIL_USER && EMAIL_PASS) {
 }
 
 // ==========================
-// 🔁 EMAIL WITH FAILOVER
+// 🔁 EMAIL RETRY FUNCTION
 // ==========================
-async function sendEmailWithRetry(mailOptions, retries = 2) {
-  // Try primary first
-  if (transporter) {
-    for (let i = 0; i < retries; i++) {
-      try {
-        await transporter.sendMail(mailOptions);
-        console.log("📧 Email sent via PRIMARY");
-        return;
-      } catch (err) {
-        console.error(`❌ Primary attempt ${i + 1} failed:`, err.message);
+async function sendEmailWithRetry(mailOptions, retries = 3) {
+  for (let i = 0; i < retries; i++) {
+    try {
+      await transporter.sendMail(mailOptions);
+      console.log("📧 Email sent successfully");
+      return;
+    } catch (err) {
+      console.error(`❌ Email attempt ${i + 1} failed:`, err.message);
+
+      if (i === retries - 1) {
+        console.error("❌ All email attempts failed");
+      } else {
         await new Promise(res => setTimeout(res, 3000));
       }
     }
   }
-
-  // Fallback to Gmail
-  if (backupTransporter) {
-    try {
-      await backupTransporter.sendMail(mailOptions);
-      console.log("📧 Email sent via BACKUP (Gmail)");
-      return;
-    } catch (err) {
-      console.error("❌ Backup also failed:", err.message);
-    }
-  }
-
-  console.error("❌ All email methods failed");
 }
 
 // ==========================
-// 🔥 FIREBASE INIT (SAFE)
+// 🔥 FIREBASE INIT
 // ==========================
 let db = null;
 
@@ -207,7 +183,6 @@ app.get("/admin/stats", verifyAdmin, async (req, res) => {
 app.get("/qr/:reference.png", async (req, res) => {
   try {
     const { reference } = req.params;
-
     const buffer = await QRCode.toBuffer(JSON.stringify({ reference }));
 
     res.setHeader("Content-Type", "image/png");
@@ -225,7 +200,6 @@ app.post("/verify", async (req, res) => {
   const { reference, ticket, qty, email, testMode } = req.body;
 
   try {
-
     let success = false;
 
     if (testMode === true) {
@@ -261,8 +235,7 @@ app.post("/verify", async (req, res) => {
         });
       }
 
-      // ✅ EMAIL (WITH FALLBACK)
-      if ((transporter || backupTransporter) && email) {
+      if (transporter && email) {
         const mailOptions = {
           from: `"STARS Tickets" <${EMAIL_USER}>`,
           to: email,
@@ -298,47 +271,7 @@ app.post("/verify", async (req, res) => {
 });
 
 // ==========================
-// 🎫 SCAN
-// ==========================
-app.post("/scan", async (req, res) => {
-  const { reference } = req.body;
-
-  try {
-    if (!db) throw new Error("Database not initialized");
-
-    const docRef = db.collection("tickets").doc(reference);
-    const doc = await docRef.get();
-
-    if (!doc.exists) {
-      return res.json({ success: false, message: "Invalid ticket" });
-    }
-
-    const ticketData = doc.data();
-
-    if (ticketData.used) {
-      return res.json({ success: false, message: "Ticket already used" });
-    }
-
-    await docRef.update({
-      used: true,
-      usedAt: new Date()
-    });
-
-    return res.json({
-      success: true,
-      message: "Access granted",
-      ticket: ticketData
-    });
-
-  } catch (err) {
-    res.status(500).json({
-      success: false,
-      message: "Server error",
-      error: err.message
-    });
-  }
-});
-
+// ROOT
 // ==========================
 app.get("/", (req, res) => {
   res.send("STARS backend running 🚀");
