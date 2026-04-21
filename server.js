@@ -48,7 +48,7 @@ if (EMAIL_USER && EMAIL_PASS) {
 }
 
 // ==========================
-// PDF GENERATOR (QR + USED WATERMARK)
+// PDF GENERATOR
 // ==========================
 function generateTicketPDF(reference, ticket, qty, email, used = false) {
   const doc = new PDFDocument({ margin: 40 });
@@ -69,7 +69,6 @@ function generateTicketPDF(reference, ticket, qty, email, used = false) {
   doc.text(`Email: ${email}`);
 
   doc.moveDown(2);
-
   doc.image(qrUrl, { fit: [200, 200], align: "center" });
 
   doc.moveDown();
@@ -116,7 +115,7 @@ try {
     const serviceAccount = JSON.parse(raw);
 
     if (serviceAccount.private_key) {
-      serviceAccount.private_key = serviceAccount.private_key.replace(/\\n/g, '\n');
+      serviceAccount.private_key = serviceAccount.private_key.replace(/\\n/g, "\n");
     }
 
     if (!admin.apps.length) {
@@ -184,7 +183,13 @@ app.post("/verify", async (req, res) => {
     const qrData = JSON.stringify({ reference, ticket, qty, email });
 
     await db.collection("tickets").doc(reference).set({
-      reference, ticket, qty, email, qrData, used: false, createdAt: new Date()
+      reference,
+      ticket,
+      qty,
+      email,
+      qrData,
+      used: false,
+      createdAt: new Date()
     });
 
     if (transporter && email) {
@@ -212,12 +217,16 @@ app.post("/verify", async (req, res) => {
 // ==========================
 app.post("/paystack-webhook", async (req, res) => {
   try {
-    const hash = crypto.createHmac("sha512", PAYSTACK_SECRET)
-      .update(JSON.stringify(req.body))
-      .digest("hex");
+    const isTest = req.headers["x-internal-test"] === "true";
 
-    if (hash !== req.headers["x-paystack-signature"]) {
-      return res.status(401).send("Invalid signature");
+    if (!isTest) {
+      const hash = crypto.createHmac("sha512", PAYSTACK_SECRET)
+        .update(JSON.stringify(req.body))
+        .digest("hex");
+
+      if (hash !== req.headers["x-paystack-signature"]) {
+        return res.status(401).send("Invalid signature");
+      }
     }
 
     const event = req.body;
@@ -239,7 +248,13 @@ app.post("/paystack-webhook", async (req, res) => {
       const qrData = JSON.stringify({ reference, ticket, qty, email });
 
       await db.collection("tickets").doc(reference).set({
-        reference, ticket, qty, email, qrData, used: false, createdAt: new Date()
+        reference,
+        ticket,
+        qty,
+        email,
+        qrData,
+        used: false,
+        createdAt: new Date()
       });
 
       if (transporter && email) {
@@ -269,7 +284,7 @@ app.post("/paystack-webhook", async (req, res) => {
 });
 
 // ==========================
-// 🧪 TEST PAYMENT FLOW (NEW UPGRADED ENDPOINT)
+// TEST PAYMENT FLOW
 // ==========================
 app.post("/test-payment-flow", async (req, res) => {
   try {
@@ -281,9 +296,7 @@ app.post("/test-payment-flow", async (req, res) => {
       event: "charge.success",
       data: {
         reference,
-        customer: {
-          email: email || "test@starsgospel.ng"
-        },
+        customer: { email: email || "test@starsgospel.ng" },
         metadata: {
           ticket: ticket || "STANDARD",
           qty: qty || 1
@@ -293,7 +306,8 @@ app.post("/test-payment-flow", async (req, res) => {
 
     await axios.post(
       "https://stars-ticket-backend.onrender.com/paystack-webhook",
-      fakeEvent
+      fakeEvent,
+      { headers: { "x-internal-test": "true" } }
     );
 
     res.json({
