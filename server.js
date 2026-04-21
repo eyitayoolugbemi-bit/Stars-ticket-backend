@@ -75,7 +75,6 @@ function generateTicketPDF(reference, ticket, qty, email, used = false) {
   doc.moveDown();
   doc.fontSize(10).text("Present this QR code at the venue entrance.", { align: "center" });
 
-  // WATERMARK IF USED
   if (used) {
     doc.rotate(45, { origin: [300, 300] });
     doc.fontSize(50).fillColor("red").opacity(0.3).text("USED", 150, 300);
@@ -196,7 +195,6 @@ app.post("/verify", async (req, res) => {
         to: email,
         subject: "Your STARS Ticket 🎟️",
         headers: { "X-Priority": "1", "Importance": "high" },
-        text: `Ticket: ${ticket}\nRef: ${reference}`,
         html: `<h2>STARS</h2><p>${ticket}</p><img src="https://stars-ticket-backend.onrender.com/qr/${reference}.png"/>`,
         attachments: [{ filename: "ticket.pdf", path: pdfPath }]
       });
@@ -233,10 +231,7 @@ app.post("/paystack-webhook", async (req, res) => {
       const qty = data.metadata?.qty || 1;
 
       const existing = await db.collection("tickets").doc(reference).get();
-      if (existing.exists) {
-        console.log("⚠️ Duplicate webhook ignored:", reference);
-        return res.sendStatus(200);
-      }
+      if (existing.exists) return res.sendStatus(200);
 
       const qrData = JSON.stringify({ reference, ticket, qty, email });
 
@@ -252,7 +247,6 @@ app.post("/paystack-webhook", async (req, res) => {
           to: email,
           subject: "Your STARS Ticket 🎟️",
           headers: { "X-Priority": "1", "Importance": "high" },
-          text: `Ticket: ${ticket}\nRef: ${reference}`,
           html: `<h2>STARS GOSPEL MUSIC EXPERIENCE</h2>
                  <p><b>Ticket:</b> ${ticket}</p>
                  <p><b>Qty:</b> ${qty}</p>
@@ -272,7 +266,38 @@ app.post("/paystack-webhook", async (req, res) => {
 });
 
 // ==========================
-// SCAN (NOW ADDS USED TIMESTAMP)
+// 🧪 TEST PAYMENT FLOW (NEW)
+// ==========================
+app.get("/test-payment-flow", async (req, res) => {
+  try {
+    const reference = "TEST_" + Date.now();
+
+    const fakeEvent = {
+      event: "charge.success",
+      data: {
+        reference,
+        customer: { email: "test@starsgospel.ng" },
+        metadata: {
+          ticket: "TEST TICKET",
+          qty: 1
+        }
+      }
+    };
+
+    await axios.post(
+      "https://stars-ticket-backend.onrender.com/paystack-webhook",
+      fakeEvent
+    );
+
+    res.json({ success: true, reference });
+
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ==========================
+// SCAN
 // ==========================
 app.post("/scan", async (req, res) => {
   const { reference } = req.body;
