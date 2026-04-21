@@ -4,7 +4,6 @@ const cors = require("cors");
 const QRCode = require("qrcode");
 const admin = require("firebase-admin");
 const jwt = require("jsonwebtoken");
-const nodemailer = require("nodemailer");
 const crypto = require("crypto");
 const PDFDocument = require("pdfkit");
 const fs = require("fs");
@@ -18,37 +17,42 @@ const PAYSTACK_SECRET = process.env.PAYSTACK_SECRET;
 const JWT_SECRET = process.env.JWT_SECRET || "secret";
 
 // ==========================
-// EMAIL CONFIG (PORT 465)
+// BREVO API CONFIG (NEW EMAIL SYSTEM)
 // ==========================
-const EMAIL_USER = process.env.EMAIL_USER;
-const EMAIL_PASS = process.env.EMAIL_PASS;
+const BREVO_API_KEY = process.env.BREVO_API_KEY;
 
-let transporter = null;
+// ==========================
+// EMAIL VIA BREVO API (REPLACED SMTP)
+// ==========================
+async function sendEmailWithRetry(payload, retries = 3) {
+  for (let i = 0; i < retries; i++) {
+    try {
+      await axios.post(
+        "https://api.brevo.com/v3/smtp/email",
+        payload,
+        {
+          headers: {
+            "api-key": BREVO_API_KEY,
+            "Content-Type": "application/json",
+            "accept": "application/json"
+          }
+        }
+      );
 
-if (EMAIL_USER && EMAIL_PASS) {
-  try {
-    transporter = nodemailer.createTransport({
-      host: "mail.starsgospel.ng",
-      port: 465,
-      secure: true,
-      auth: {
-        user: EMAIL_USER,
-        pass: EMAIL_PASS
-      },
-      tls: { rejectUnauthorized: false },
-      connectionTimeout: 20000,
-      greetingTimeout: 20000,
-      socketTimeout: 20000
-    });
+      console.log("📧 Email sent successfully via Brevo API");
+      return;
 
-    console.log("✅ Email transporter ready (PORT 465)");
-  } catch (err) {
-    console.error("❌ Email setup error:", err.message);
+    } catch (err) {
+      console.error(`❌ Email attempt ${i + 1} failed:`, err.response?.data || err.message);
+      if (i < retries - 1) {
+        await new Promise(r => setTimeout(r, 3000));
+      }
+    }
   }
 }
 
 // ==========================
-// PDF GENERATOR (FIXED - NO URL IMAGE)
+// PDF GENERATOR (UNCHANGED)
 // ==========================
 async function generateTicketPDF(reference, ticket, qty, email, used = false) {
   const doc = new PDFDocument({ margin: 40 });
@@ -57,7 +61,6 @@ async function generateTicketPDF(reference, ticket, qty, email, used = false) {
   const stream = fs.createWriteStream(filePath);
   doc.pipe(stream);
 
-  // ✅ FIX: QR GENERATED AS BUFFER (NOT URL)
   const qrBuffer = await QRCode.toBuffer(
     JSON.stringify({ reference }),
     { type: "png" }
@@ -73,8 +76,6 @@ async function generateTicketPDF(reference, ticket, qty, email, used = false) {
   doc.text(`Email: ${email}`);
 
   doc.moveDown(2);
-
-  // ✅ SAFE IMAGE INSERT
   doc.image(qrBuffer, { fit: [200, 200], align: "center" });
 
   doc.moveDown();
@@ -94,23 +95,7 @@ async function generateTicketPDF(reference, ticket, qty, email, used = false) {
 }
 
 // ==========================
-// EMAIL RETRY
-// ==========================
-async function sendEmailWithRetry(mailOptions, retries = 3) {
-  for (let i = 0; i < retries; i++) {
-    try {
-      await transporter.sendMail(mailOptions);
-      console.log("📧 Email sent successfully");
-      return;
-    } catch (err) {
-      console.error(`❌ Email attempt ${i + 1} failed:`, err.message);
-      if (i < retries - 1) await new Promise(r => setTimeout(r, 3000));
-    }
-  }
-}
-
-// ==========================
-// FIREBASE INIT
+// FIREBASE INIT (UNCHANGED)
 // ==========================
 let db = null;
 
@@ -138,7 +123,7 @@ try {
 }
 
 // ==========================
-// ADMIN LOGIN
+// ADMIN LOGIN (UNCHANGED)
 // ==========================
 app.post("/admin/login", async (req, res) => {
   const { email, password } = req.body;
@@ -152,11 +137,13 @@ app.post("/admin/login", async (req, res) => {
 });
 
 // ==========================
-// QR IMAGE
+// QR IMAGE (UNCHANGED)
 // ==========================
 app.get("/qr/:reference.png", async (req, res) => {
   try {
-    const buffer = await QRCode.toBuffer(JSON.stringify({ reference: req.params.reference }));
+    const buffer = await QRCode.toBuffer(
+      JSON.stringify({ reference: req.params.reference })
+    );
     res.setHeader("Content-Type", "image/png");
     res.send(buffer);
   } catch {
@@ -165,7 +152,7 @@ app.get("/qr/:reference.png", async (req, res) => {
 });
 
 // ==========================
-// VERIFY (FALLBACK)
+// VERIFY (UNCHANGED LOGIC, ONLY EMAIL SWITCHED)
 // ==========================
 app.post("/verify", async (req, res) => {
   const { reference, ticket, qty, email, testMode } = req.body;
@@ -175,9 +162,12 @@ app.post("/verify", async (req, res) => {
 
     if (testMode) success = true;
     else {
-      const r = await axios.get(`https://api.paystack.co/transaction/verify/${reference}`, {
-        headers: { Authorization: `Bearer ${PAYSTACK_SECRET}` }
-      });
+      const r = await axios.get(
+        `https://api.paystack.co/transaction/verify/${reference}`,
+        {
+          headers: { Authorization: `Bearer ${PAYSTACK_SECRET}` }
+        }
+      );
       success = r.data.data?.status === "success";
     }
 
@@ -198,16 +188,29 @@ app.post("/verify", async (req, res) => {
       createdAt: new Date()
     });
 
-    if (transporter && email) {
+    if (email) {
       const pdfPath = await generateTicketPDF(reference, ticket, qty, email);
 
       await sendEmailWithRetry({
-        from: `"STARS Gospel Music Experience 🎟️" <${EMAIL_USER}>`,
-        to: email,
+        sender: {
+          name: "STARS Gospel Music Experience",
+          email: "info@starsgospel.ng"
+        },
+        to: [{ email }],
         subject: "Your STARS Ticket 🎟️",
-        headers: { "X-Priority": "1", "Importance": "high" },
-        html: `<h2>STARS</h2><p>${ticket}</p><img src="https://stars-ticket-backend.onrender.com/qr/${reference}.png"/>`,
-        attachments: [{ filename: "ticket.pdf", path: pdfPath }]
+        htmlContent: `
+          <h2>STARS GOSPEL MUSIC EXPERIENCE</h2>
+          <p><b>Ticket:</b> ${ticket}</p>
+          <p><b>Qty:</b> ${qty}</p>
+          <p><b>Ref:</b> ${reference}</p>
+          <img src="https://stars-ticket-backend.onrender.com/qr/${reference}.png" width="220"/>
+        `,
+        attachment: [
+          {
+            name: "ticket.pdf",
+            content: fs.readFileSync(pdfPath).toString("base64")
+          }
+        ]
       });
     }
 
@@ -219,7 +222,7 @@ app.post("/verify", async (req, res) => {
 });
 
 // ==========================
-// PAYSTACK WEBHOOK (PRIMARY)
+// PAYSTACK WEBHOOK (UNCHANGED)
 // ==========================
 app.post("/paystack-webhook", async (req, res) => {
   try {
@@ -246,10 +249,7 @@ app.post("/paystack-webhook", async (req, res) => {
       const qty = data.metadata?.qty || 1;
 
       const existing = await db.collection("tickets").doc(reference).get();
-      if (existing.exists) {
-        console.log("⚠️ Duplicate webhook ignored:", reference);
-        return res.sendStatus(200);
-      }
+      if (existing.exists) return res.sendStatus(200);
 
       const qrData = JSON.stringify({ reference, ticket, qty, email });
 
@@ -263,20 +263,29 @@ app.post("/paystack-webhook", async (req, res) => {
         createdAt: new Date()
       });
 
-      if (transporter && email) {
+      if (email) {
         const pdfPath = await generateTicketPDF(reference, ticket, qty, email);
 
         await sendEmailWithRetry({
-          from: `"STARS Gospel Music Experience 🎟️" <${EMAIL_USER}>`,
-          to: email,
+          sender: {
+            name: "STARS Gospel Music Experience",
+            email: "info@starsgospel.ng"
+          },
+          to: [{ email }],
           subject: "Your STARS Ticket 🎟️",
-          headers: { "X-Priority": "1", "Importance": "high" },
-          html: `<h2>STARS GOSPEL MUSIC EXPERIENCE</h2>
-                 <p><b>Ticket:</b> ${ticket}</p>
-                 <p><b>Qty:</b> ${qty}</p>
-                 <p><b>Ref:</b> ${reference}</p>
-                 <img src="https://stars-ticket-backend.onrender.com/qr/${reference}.png" width="220"/>`,
-          attachments: [{ filename: "STARS_TICKET.pdf", path: pdfPath }]
+          htmlContent: `
+            <h2>STARS GOSPEL MUSIC EXPERIENCE</h2>
+            <p><b>Ticket:</b> ${ticket}</p>
+            <p><b>Qty:</b> ${qty}</p>
+            <p><b>Ref:</b> ${reference}</p>
+            <img src="https://stars-ticket-backend.onrender.com/qr/${reference}.png" width="220"/>
+          `,
+          attachment: [
+            {
+              name: "ticket.pdf",
+              content: fs.readFileSync(pdfPath).toString("base64")
+            }
+          ]
         });
       }
     }
@@ -290,7 +299,7 @@ app.post("/paystack-webhook", async (req, res) => {
 });
 
 // ==========================
-// TEST PAYMENT FLOW
+// TEST PAYMENT FLOW (UNCHANGED)
 // ==========================
 app.post("/test-payment-flow", async (req, res) => {
   try {
@@ -316,13 +325,7 @@ app.post("/test-payment-flow", async (req, res) => {
       { headers: { "x-internal-test": "true" } }
     );
 
-    res.json({
-      success: true,
-      reference,
-      email,
-      ticket,
-      qty
-    });
+    res.json({ success: true, reference, email, ticket, qty });
 
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -330,7 +333,7 @@ app.post("/test-payment-flow", async (req, res) => {
 });
 
 // ==========================
-// SCAN
+// SCAN (UNCHANGED)
 // ==========================
 app.post("/scan", async (req, res) => {
   const { reference } = req.body;
