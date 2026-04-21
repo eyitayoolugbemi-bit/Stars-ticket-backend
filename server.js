@@ -4,7 +4,6 @@ const cors = require("cors");
 const QRCode = require("qrcode");
 const admin = require("firebase-admin");
 const jwt = require("jsonwebtoken");
-const nodemailer = require("nodemailer");
 
 const app = express();
 
@@ -15,58 +14,44 @@ const PAYSTACK_SECRET = process.env.PAYSTACK_SECRET;
 const JWT_SECRET = process.env.JWT_SECRET || "secret";
 
 // ==========================
-// ✅ EMAIL CONFIG (PORT 465)
+// 📧 BREVO EMAIL ONLY CONFIG
 // ==========================
-const EMAIL_USER = process.env.EMAIL_USER;
-const EMAIL_PASS = process.env.EMAIL_PASS;
+const BREVO_API_KEY = process.env.BREVO_API_KEY;
+const EMAIL_USER = process.env.EMAIL_USER; // sender email (verified in Brevo)
 
-let transporter = null;
-
-if (EMAIL_USER && EMAIL_PASS) {
+// ==========================
+// 📧 BREVO EMAIL FUNCTION
+// ==========================
+async function sendEmail(mailOptions) {
   try {
-    transporter = nodemailer.createTransport({
-      host: "mail.starsgospel.ng",
-      port: 465, // ✅ CHANGED TO 465
-      secure: true, // ✅ REQUIRED for 465
-      auth: {
-        user: EMAIL_USER,
-        pass: EMAIL_PASS
-      },
-      tls: {
-        rejectUnauthorized: false
-      },
-      connectionTimeout: 20000,
-      greetingTimeout: 20000,
-      socketTimeout: 20000
-    });
+    if (!BREVO_API_KEY) {
+      console.error("❌ BREVO_API_KEY not set");
+      return;
+    }
 
-    console.log("✅ Email transporter ready (PORT 465)");
+    await axios.post(
+      "https://api.brevo.com/v3/smtp/email",
+      {
+        sender: {
+          name: "STARS Tickets",
+          email: EMAIL_USER
+        },
+        to: [{ email: mailOptions.to }],
+        subject: mailOptions.subject,
+        htmlContent: mailOptions.html
+      },
+      {
+        headers: {
+          "api-key": BREVO_API_KEY,
+          "Content-Type": "application/json"
+        }
+      }
+    );
+
+    console.log("📧 Email sent via Brevo");
 
   } catch (err) {
-    console.error("❌ Email setup error:", err.message);
-  }
-} else {
-  console.warn("⚠️ Email credentials not set");
-}
-
-// ==========================
-// 🔁 EMAIL RETRY FUNCTION
-// ==========================
-async function sendEmailWithRetry(mailOptions, retries = 3) {
-  for (let i = 0; i < retries; i++) {
-    try {
-      await transporter.sendMail(mailOptions);
-      console.log("📧 Email sent successfully");
-      return;
-    } catch (err) {
-      console.error(`❌ Email attempt ${i + 1} failed:`, err.message);
-
-      if (i === retries - 1) {
-        console.error("❌ All email attempts failed");
-      } else {
-        await new Promise(res => setTimeout(res, 3000));
-      }
-    }
+    console.error("❌ Brevo email failed:", err.response?.data || err.message);
   }
 }
 
@@ -82,7 +67,8 @@ try {
     const serviceAccount = JSON.parse(raw);
 
     if (serviceAccount.private_key) {
-      serviceAccount.private_key = serviceAccount.private_key.replace(/\\n/g, '\n');
+      serviceAccount.private_key =
+        serviceAccount.private_key.replace(/\\n/g, "\n");
     }
 
     if (!admin.apps.length) {
@@ -134,26 +120,20 @@ function verifyAdmin(req, res, next) {
 }
 
 // ==========================
-// 📧 TEST EMAIL ROUTE
+// 📧 TEST EMAIL (BREVO)
 // ==========================
 app.get("/test-email", async (req, res) => {
   try {
-    if (!transporter) {
-      return res.status(500).send("❌ Email not configured");
-    }
-
-    await transporter.sendMail({
-      from: `"STARS Test" <${EMAIL_USER}>`,
+    await sendEmail({
       to: EMAIL_USER,
-      subject: "Test Email from STARS 🚀",
-      html: "<h2>Email is working perfectly ✅</h2>"
+      subject: "STARS Test Email 🚀",
+      html: "<h2>Email system (Brevo) is working perfectly ✅</h2>"
     });
 
-    res.send("✅ Test email sent successfully");
+    res.send("✅ Test email sent via Brevo");
 
   } catch (err) {
-    console.error("❌ Test email error:", err.message);
-    res.status(500).send("❌ Email failed: " + err.message);
+    res.status(500).send("❌ Email failed");
   }
 });
 
@@ -183,7 +163,10 @@ app.get("/admin/stats", verifyAdmin, async (req, res) => {
 app.get("/qr/:reference.png", async (req, res) => {
   try {
     const { reference } = req.params;
-    const buffer = await QRCode.toBuffer(JSON.stringify({ reference }));
+
+    const buffer = await QRCode.toBuffer(
+      JSON.stringify({ reference })
+    );
 
     res.setHeader("Content-Type", "image/png");
     res.send(buffer);
@@ -200,6 +183,7 @@ app.post("/verify", async (req, res) => {
   const { reference, ticket, qty, email, testMode } = req.body;
 
   try {
+
     let success = false;
 
     if (testMode === true) {
@@ -235,9 +219,9 @@ app.post("/verify", async (req, res) => {
         });
       }
 
-      if (transporter && email) {
-        const mailOptions = {
-          from: `"STARS Tickets" <${EMAIL_USER}>`,
+      // 📧 SEND EMAIL VIA BREVO
+      if (email) {
+        sendEmail({
           to: email,
           subject: "Your STARS Ticket 🎟️",
           html: `
@@ -248,24 +232,63 @@ app.post("/verify", async (req, res) => {
             <br/>
             <img src="https://stars-ticket-backend.onrender.com/qr/${reference}.png" style="width:250px;" />
           `
-        };
-
-        sendEmailWithRetry(mailOptions);
+        });
       }
 
       return res.json({ success: true, reference });
-
-    } else {
-      return res.json({
-        success: false,
-        message: "Payment not successful"
-      });
     }
+
+    return res.json({
+      success: false,
+      message: "Payment not successful"
+    });
 
   } catch (error) {
     return res.status(500).json({
       error: "Verification failed",
-      details: error.response?.data || error.message
+      details: error.message
+    });
+  }
+});
+
+// ==========================
+// 🎫 SCAN
+// ==========================
+app.post("/scan", async (req, res) => {
+  const { reference } = req.body;
+
+  try {
+    if (!db) throw new Error("DB not initialized");
+
+    const docRef = db.collection("tickets").doc(reference);
+    const doc = await docRef.get();
+
+    if (!doc.exists) {
+      return res.json({ success: false, message: "Invalid ticket" });
+    }
+
+    const data = doc.data();
+
+    if (data.used) {
+      return res.json({ success: false, message: "Already used" });
+    }
+
+    await docRef.update({
+      used: true,
+      usedAt: new Date()
+    });
+
+    return res.json({
+      success: true,
+      message: "Access granted",
+      ticket: data
+    });
+
+  } catch (err) {
+    res.status(500).json({
+      success: false,
+      message: "Server error",
+      error: err.message
     });
   }
 });
@@ -274,9 +297,11 @@ app.post("/verify", async (req, res) => {
 // ROOT
 // ==========================
 app.get("/", (req, res) => {
-  res.send("STARS backend running 🚀");
+  res.send("STARS backend running 🚀 (Brevo Email Active)");
 });
 
+// ==========================
+// START SERVER
 // ==========================
 const PORT = process.env.PORT || 10000;
 
