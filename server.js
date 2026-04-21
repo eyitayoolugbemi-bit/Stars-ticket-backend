@@ -231,7 +231,10 @@ app.post("/paystack-webhook", async (req, res) => {
       const qty = data.metadata?.qty || 1;
 
       const existing = await db.collection("tickets").doc(reference).get();
-      if (existing.exists) return res.sendStatus(200);
+      if (existing.exists) {
+        console.log("⚠️ Duplicate webhook ignored:", reference);
+        return res.sendStatus(200);
+      }
 
       const qrData = JSON.stringify({ reference, ticket, qty, email });
 
@@ -266,20 +269,24 @@ app.post("/paystack-webhook", async (req, res) => {
 });
 
 // ==========================
-// 🧪 TEST PAYMENT FLOW (NEW)
+// 🧪 TEST PAYMENT FLOW (NEW UPGRADED ENDPOINT)
 // ==========================
-app.get("/test-payment-flow", async (req, res) => {
+app.post("/test-payment-flow", async (req, res) => {
   try {
+    const { email, ticket, qty } = req.body;
+
     const reference = "TEST_" + Date.now();
 
     const fakeEvent = {
       event: "charge.success",
       data: {
         reference,
-        customer: { email: "test@starsgospel.ng" },
+        customer: {
+          email: email || "test@starsgospel.ng"
+        },
         metadata: {
-          ticket: "TEST TICKET",
-          qty: 1
+          ticket: ticket || "STANDARD",
+          qty: qty || 1
         }
       }
     };
@@ -289,7 +296,13 @@ app.get("/test-payment-flow", async (req, res) => {
       fakeEvent
     );
 
-    res.json({ success: true, reference });
+    res.json({
+      success: true,
+      reference,
+      email,
+      ticket,
+      qty
+    });
 
   } catch (err) {
     res.status(500).json({ error: err.message });
