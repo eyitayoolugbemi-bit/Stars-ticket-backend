@@ -48,16 +48,20 @@ if (EMAIL_USER && EMAIL_PASS) {
 }
 
 // ==========================
-// PDF GENERATOR
+// PDF GENERATOR (FIXED - NO URL IMAGE)
 // ==========================
-function generateTicketPDF(reference, ticket, qty, email, used = false) {
+async function generateTicketPDF(reference, ticket, qty, email, used = false) {
   const doc = new PDFDocument({ margin: 40 });
   const filePath = `/tmp/${reference}.pdf`;
 
   const stream = fs.createWriteStream(filePath);
   doc.pipe(stream);
 
-  const qrUrl = `https://stars-ticket-backend.onrender.com/qr/${reference}.png`;
+  // ✅ FIX: QR GENERATED AS BUFFER (NOT URL)
+  const qrBuffer = await QRCode.toBuffer(
+    JSON.stringify({ reference }),
+    { type: "png" }
+  );
 
   doc.fontSize(20).text("STARS GOSPEL MUSIC EXPERIENCE", { align: "center" });
   doc.moveDown();
@@ -69,7 +73,9 @@ function generateTicketPDF(reference, ticket, qty, email, used = false) {
   doc.text(`Email: ${email}`);
 
   doc.moveDown(2);
-  doc.image(qrUrl, { fit: [200, 200], align: "center" });
+
+  // ✅ SAFE IMAGE INSERT
+  doc.image(qrBuffer, { fit: [200, 200], align: "center" });
 
   doc.moveDown();
   doc.fontSize(10).text("Present this QR code at the venue entrance.", { align: "center" });
